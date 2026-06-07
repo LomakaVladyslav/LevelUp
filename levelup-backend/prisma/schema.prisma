@@ -1,0 +1,203 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  username     String   @unique
+  passwordHash String
+  avatarUrl    String?
+  age          Int?
+  xp           Int      @default(0)
+  level        Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  activities       Activity[]
+  plannedActivities PlannedActivity[]
+  userAchievements UserAchievement[]
+  streaks          Streak[]
+  xpHistory        XpHistory[]
+  goals            Goal[]
+}
+
+model Activity {
+  id          String       @id @default(uuid())
+  userId      String
+  type        ActivityType
+  title       String
+  description String?
+  xpEarned    Int
+  duration    Int?
+  plannedActivityId String?
+  completedForDate DateTime?
+  completedAt DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plannedActivity PlannedActivity? @relation(fields: [plannedActivityId], references: [id], onDelete: SetNull)
+  translations ActivityTranslation[]
+
+  @@unique([userId, plannedActivityId, completedForDate])
+  @@index([plannedActivityId])
+}
+
+model ActivityTranslation {
+  id          String @id @default(uuid())
+  activityId  String
+  locale      String
+  title       String
+  description String?
+  sourceHash  String
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, locale])
+  @@index([activityId, sourceHash])
+}
+
+enum ActivityType {
+  STUDY
+  WORKOUT
+  HABIT
+  CUSTOM
+}
+
+model PlannedActivity {
+  id             String                      @id @default(uuid())
+  userId         String
+  type           ActivityType
+  title          String
+  description    String?
+  scheduleType   PlannedActivityScheduleType @default(SIMPLE)
+  dueDate        DateTime?
+  dueTimeMinutes Int?
+  timezone       String                      @default("UTC")
+  status         PlannedActivityStatus       @default(ACTIVE)
+  completedAt    DateTime?
+  disabledAt     DateTime?
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  completedActivities Activity[]
+  translations PlannedActivityTranslation[]
+
+  @@index([userId, status])
+  @@index([userId, scheduleType])
+}
+
+model PlannedActivityTranslation {
+  id                String @id @default(uuid())
+  plannedActivityId String
+  locale            String
+  title             String
+  description       String?
+  sourceHash        String
+
+  plannedActivity PlannedActivity @relation(fields: [plannedActivityId], references: [id], onDelete: Cascade)
+
+  @@unique([plannedActivityId, locale])
+  @@index([plannedActivityId, sourceHash])
+}
+
+enum PlannedActivityScheduleType {
+  SIMPLE
+  DAILY
+  DATE
+}
+
+enum PlannedActivityStatus {
+  ACTIVE
+  COMPLETED
+  DISABLED
+}
+
+model Achievement {
+  id          String @id @default(uuid())
+  code        String @unique
+  name        String
+  description String
+  iconEmoji   String @default("🏆")
+  xpReward    Int    @default(0)
+  condition   String
+
+  userAchievements UserAchievement[]
+  translations AchievementTranslation[]
+}
+
+model AchievementTranslation {
+  id            String @id @default(uuid())
+  achievementId String
+  locale        String
+  name          String
+  description   String
+
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([achievementId, locale])
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+}
+
+model Streak {
+  id               String    @id @default(uuid())
+  userId           String
+  type             String    @default("daily")
+  currentCount     Int       @default(0)
+  longestCount     Int       @default(0)
+  lastActivityDate DateTime?
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+}
+
+model XpHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Goal {
+  id           String       @id @default(uuid())
+  userId       String
+  title        String
+  targetCount  Int
+  currentCount Int          @default(0)
+  type         ActivityType
+  deadline     DateTime?
+  isCompleted  Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+generator erd {
+
+  provider = "prisma-erd-generator"
+
+  output   = "./ERD.svg"
+
+}
