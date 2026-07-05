@@ -42,7 +42,11 @@ const buildActivityTrigger = (
   const { hour, minute } = minutesToHourMinute(activity.dueTimeMinutes);
 
   if (activity.scheduleType === 'DAILY') {
-    return { hour, minute, repeats: true } as Notifications.NotificationTriggerInput;
+    return {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour,
+      minute,
+    };
   }
 
   if (activity.scheduleType === 'DATE') {
@@ -50,17 +54,23 @@ const buildActivityTrigger = (
     if (!date) return null;
 
     date.setHours(hour, minute, 0, 0);
-    return date.getTime() > Date.now() ? date : null;
+    return date.getTime() > Date.now()
+      ? { type: Notifications.SchedulableTriggerInputTypes.DATE, date }
+      : null;
   }
 
-  return nextSimpleReminderDate(activity.dueTimeMinutes);
+  return {
+    type: Notifications.SchedulableTriggerInputTypes.DATE,
+    date: nextSimpleReminderDate(activity.dueTimeMinutes),
+  };
 };
 
 export const notificationService = {
   configure: () => {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
         shouldPlaySound: true,
         shouldSetBadge: false,
       }),
@@ -84,10 +94,10 @@ export const notificationService = {
         body: translate(language, 'notifications.body'),
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: 9,
         minute: 0,
-        repeats: true,
-      } as Notifications.NotificationTriggerInput,
+      },
     });
 
     await AsyncStorage.setItem(REMINDER_ID_KEY, id);
