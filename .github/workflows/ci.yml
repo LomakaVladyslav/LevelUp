@@ -29,5 +29,9 @@ jobs:
         run: npm ci --legacy-peer-deps
         working-directory: levelup-mobile
 
+      - name: Generate Prisma Client
+        run: npm run generate
+        working-directory: levelup-backend
+
       - name: Run checks
         run: npm run check

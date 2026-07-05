@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import prisma from '../utils/prisma';
 import { avatarUrlForFile, deleteAvatarFile } from '../utils/avatar';
 import { sendPasswordResetEmail } from '../services/mail.service';
@@ -362,7 +362,7 @@ export const resetPassword = async (
     const passwordHash = await bcrypt.hash(password, 12);
     const usedAt = new Date();
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.update({
         where: { id: resetToken.userId },
         data: { passwordHash },
