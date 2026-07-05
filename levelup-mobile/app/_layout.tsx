@@ -1,14 +1,19 @@
 import { useEffect } from 'react';
+import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '../stores/auth.store';
 import { useSettingsStore } from '../stores/settings.store';
 import { notificationService } from '../services/notification.service';
+import { themes } from '../constants/theme';
 
 export default function RootLayout() {
   const { token, isLoading, loadFromStorage } = useAuthStore();
   const loadSettings = useSettingsStore((s) => s.loadFromStorage);
+  const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
+  const themeMode = useSettingsStore((s) => s.themeMode);
   const router = useRouter();
   const segments = useSegments();
+  const theme = themes[themeMode];
 
   // Restore session from AsyncStorage on app start
   useEffect(() => {
@@ -32,12 +37,18 @@ export default function RootLayout() {
     }
   }, [token, isLoading, segments, router]);
 
-  if (isLoading) return null;
+  if (isLoading || !settingsLoaded) return null;
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="auth" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <StatusBar
+        style={themeMode === 'dark' ? 'light' : 'dark'}
+        backgroundColor={theme.colors.background}
+      />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="auth" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </>
   );
 }

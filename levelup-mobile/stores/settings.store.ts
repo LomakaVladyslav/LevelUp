@@ -1,19 +1,23 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { Language } from '../constants/i18n';
+import { isLanguage, Language } from '../constants/i18n';
+import { isThemeMode, ThemeMode } from '../constants/theme';
 import { notificationService } from '../services/notification.service';
 import { plannedActivityService } from '../services/plannedActivity.service';
 
 interface SettingsStore {
   language: Language;
+  themeMode: ThemeMode;
+  settingsLoaded: boolean;
   notificationsEnabled: boolean;
   loadFromStorage: () => Promise<void>;
   setLanguage: (language: Language) => Promise<void>;
-  toggleLanguage: () => Promise<void>;
+  setThemeMode: (themeMode: ThemeMode) => Promise<void>;
   setNotificationsEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const LANGUAGE_KEY = 'language';
+const THEME_MODE_KEY = 'themeMode';
 const NOTIFICATIONS_ENABLED_KEY = 'notificationsEnabled';
 
 export const useSettingsStore = createSettingsStore();
@@ -21,23 +25,33 @@ export const useSettingsStore = createSettingsStore();
 function createSettingsStore() {
   return create<SettingsStore>((set, get) => ({
     language: 'en',
+    themeMode: 'light',
+    settingsLoaded: false,
     notificationsEnabled: false,
 
     loadFromStorage: async () => {
-      const [storedLanguage, storedNotificationsEnabled] = await Promise.all([
-        AsyncStorage.getItem(LANGUAGE_KEY),
-        AsyncStorage.getItem(NOTIFICATIONS_ENABLED_KEY),
-      ]);
+      try {
+        const [storedLanguage, storedThemeMode, storedNotificationsEnabled] = await Promise.all([
+          AsyncStorage.getItem(LANGUAGE_KEY),
+          AsyncStorage.getItem(THEME_MODE_KEY),
+          AsyncStorage.getItem(NOTIFICATIONS_ENABLED_KEY),
+        ]);
 
-      set({
-        language: storedLanguage === 'uk' ? 'uk' : 'en',
-        notificationsEnabled: storedNotificationsEnabled === 'true',
-      });
+        set({
+          language: isLanguage(storedLanguage) ? storedLanguage : 'en',
+          themeMode: isThemeMode(storedThemeMode) ? storedThemeMode : 'light',
+          notificationsEnabled: storedNotificationsEnabled === 'true',
+          settingsLoaded: true,
+        });
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+        set({ settingsLoaded: true });
+      }
     },
 
     setLanguage: async (language) => {
-      await AsyncStorage.setItem(LANGUAGE_KEY, language);
       set({ language });
+      await AsyncStorage.setItem(LANGUAGE_KEY, language);
 
       const reminderUpdates: Promise<unknown>[] = [
         plannedActivityService.getAll().then(({ plannedActivities }) =>
@@ -62,9 +76,9 @@ function createSettingsStore() {
       }
     },
 
-    toggleLanguage: async () => {
-      const nextLanguage: Language = get().language === 'en' ? 'uk' : 'en';
-      await get().setLanguage(nextLanguage);
+    setThemeMode: async (themeMode) => {
+      set({ themeMode });
+      await AsyncStorage.setItem(THEME_MODE_KEY, themeMode);
     },
 
     setNotificationsEnabled: async (enabled) => {

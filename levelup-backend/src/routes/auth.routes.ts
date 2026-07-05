@@ -1,7 +1,10 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import {
+  availability,
   register,
   login,
+  forgotPassword,
+  resetPassword,
   getMe,
   updateMe,
   updateAvatar,
@@ -23,8 +26,11 @@ const avatarUpload = (req: Request, res: Response, next: NextFunction): void => 
   });
 };
 
+router.post('/availability', availability);
 router.post('/register', avatarUpload, register);
 router.post('/login', login);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.get('/me', authenticate, getMe);
 router.patch('/me', authenticate, updateMe);
 router.post('/me/avatar', authenticate, avatarUpload, updateAvatar);

@@ -11,6 +11,13 @@ import {
   sourceTextHash,
 } from '../services/content-translation.service';
 import { getRequestLocale } from '../utils/locale';
+import {
+  calculateActivityStreak,
+  calculateTodayProgress,
+  dateFromKey,
+  dateKeyInTimezone,
+  normalizeTimezone,
+} from '../services/planned-activity-metrics.service';
 
 const validTypes = ['STUDY', 'WORKOUT', 'HABIT', 'CUSTOM'] as const;
 const validScheduleTypes = ['SIMPLE', 'DAILY', 'DATE'] as const;
@@ -24,11 +31,20 @@ type PlannedActivityData = {
   type: ActivityTypeInput;
   title: string;
   description: string | null;
+  motivationText: string | null;
   scheduleType: ScheduleTypeInput;
   dueDate: Date | null;
   dueTimeMinutes: number | null;
   timezone: string;
 };
+
+const translationInclude = (locale: string) => ({
+  translations: {
+    where: { locale: { in: [locale, 'en'] } },
+  },
+});
+
+const storedDateKey = (date: Date): string => date.toISOString().slice(0, 10);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -71,35 +87,6 @@ const parseDueDate = (value: unknown): Date | null | undefined => {
   return Number.isNaN(date.getTime()) ? undefined : date;
 };
 
-const normalizeTimezone = (value: unknown): string => {
-  const timezone = cleanText(value) ?? 'UTC';
-
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
-    return timezone;
-  } catch {
-    return 'UTC';
-  }
-};
-
-const dateKeyInTimezone = (date: Date, timezone: string): string => {
-  const safeTimezone = normalizeTimezone(timezone);
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: safeTimezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-
-  const year = parts.find((part) => part.type === 'year')?.value;
-  const month = parts.find((part) => part.type === 'month')?.value;
-  const day = parts.find((part) => part.type === 'day')?.value;
-
-  return `${year}-${month}-${day}`;
-};
-
-const dateFromKey = (dateKey: string): Date => new Date(`${dateKey}T00:00:00.000Z`);
-
 const validateCreatePayload = (payload: unknown): {
   data?: PlannedActivityData;
   error?: string;
@@ -139,10 +126,11 @@ const validateCreatePayload = (payload: unknown): {
       type: payload.type,
       title,
       description: cleanText(payload.description),
+      motivationText: cleanText(payload.motivationText),
       scheduleType,
       dueDate: scheduleType === 'DATE' ? parsedDueDate : null,
       dueTimeMinutes: dueTimeMinutes ?? null,
-      timezone: normalizeTimezone(payload.timezone),
+      timezone: normalizeTimezone(cleanText(payload.timezone) ?? 'UTC'),
     },
   };
 };
@@ -216,24 +204,152 @@ export const getPlannedActivities = async (
   try {
     const locale = getRequestLocale(req);
     const includeInactive = req.query.includeInactive === 'true';
+    const now = new Date();
 
-    const plannedActivities = await prisma.plannedActivity.findMany({
+    const metricActivities = await prisma.plannedActivity.findMany({
       where: {
         userId: req.user.id,
-        ...(includeInactive ? {} : { status: 'ACTIVE' }),
+        ...(includeInactive
+          ? {}
+          : {
+              OR: [
+                { status: 'ACTIVE' },
+                { status: 'COMPLETED', scheduleType: 'DATE' },
+              ],
+          }),
       },
-      include: { translations: true },
+      include: translationInclude(locale),
       orderBy: [
         { dueDate: 'asc' },
         { createdAt: 'desc' },
       ],
     });
 
-    const activitiesWithState = await addDailyCompletionState(plannedActivities);
+    const visibleActivities = includeInactive
+      ? metricActivities
+      : metricActivities.filter((activity) => activity.status === 'ACTIVE');
+    const dailyActivities = visibleActivities.filter(
+      (activity) => activity.scheduleType === 'DAILY',
+    );
+    const progressCompletionTargets = metricActivities.flatMap((activity) => {
+      if (activity.status === 'DISABLED' || activity.scheduleType === 'SIMPLE') {
+        return [];
+      }
+
+      const todayDateKey = dateKeyInTimezone(now, activity.timezone);
+      const dueToday =
+        activity.scheduleType === 'DAILY' ||
+        (activity.scheduleType === 'DATE' &&
+          activity.dueDate !== null &&
+          storedDateKey(activity.dueDate) === todayDateKey);
+
+      return dueToday
+        ? [{ id: activity.id, completedForDate: dateFromKey(todayDateKey) }]
+        : [];
+    });
+    const progressCompletionDates = [
+      ...new Map(
+        progressCompletionTargets.map((target) => [
+          target.completedForDate.toISOString(),
+          target.completedForDate,
+        ]),
+      ).values(),
+    ];
+
+    const [streakCompletions, progressCompletions] = await Promise.all([
+      dailyActivities.length > 0
+        ? prisma.activity.findMany({
+            where: {
+              userId: req.user.id,
+              plannedActivityId: {
+                in: dailyActivities.map((activity) => activity.id),
+              },
+              completedForDate: { not: null },
+            },
+            select: {
+              plannedActivityId: true,
+              completedForDate: true,
+              completedAt: true,
+            },
+          })
+        : Promise.resolve([]),
+      progressCompletionTargets.length > 0
+        ? prisma.activity.findMany({
+            where: {
+              userId: req.user.id,
+              plannedActivityId: {
+                in: progressCompletionTargets.map((activity) => activity.id),
+              },
+              completedForDate: { in: progressCompletionDates },
+            },
+            select: {
+              plannedActivityId: true,
+              completedForDate: true,
+              completedAt: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const completions = [...streakCompletions, ...progressCompletions];
+
+    const completionDatesByActivityId = new Map<string, string[]>();
+    const completionTodayByActivityId = new Map<string, Date>();
+    const plannedActivityById = new Map(
+      metricActivities.map((activity) => [activity.id, activity]),
+    );
+
+    for (const completion of completions) {
+      if (!completion.plannedActivityId || !completion.completedForDate) continue;
+
+      const dateKey = storedDateKey(completion.completedForDate);
+      const dates =
+        completionDatesByActivityId.get(completion.plannedActivityId) ?? [];
+      dates.push(dateKey);
+      completionDatesByActivityId.set(completion.plannedActivityId, dates);
+
+      const plannedActivity = plannedActivityById.get(
+        completion.plannedActivityId,
+      );
+      if (
+        plannedActivity &&
+        dateKey === dateKeyInTimezone(now, plannedActivity.timezone)
+      ) {
+        completionTodayByActivityId.set(
+          completion.plannedActivityId,
+          completion.completedAt,
+        );
+      }
+    }
+
+    const activitiesWithMetrics = visibleActivities.map((activity) => {
+      const completedTodayAt =
+        completionTodayByActivityId.get(activity.id) ?? null;
+      const streakDays = activity.scheduleType === 'DAILY'
+        ? calculateActivityStreak(
+            completionDatesByActivityId.get(activity.id) ?? [],
+            dateKeyInTimezone(now, activity.timezone),
+          )
+        : null;
+
+      return {
+        ...activity,
+        isCompletedToday:
+          activity.scheduleType === 'DAILY' && Boolean(completedTodayAt),
+        completedTodayAt:
+          activity.scheduleType === 'DAILY' ? completedTodayAt : null,
+        streakDays,
+      };
+    });
+
     res.json({
       plannedActivities: await localizePlannedActivities(
-        activitiesWithState,
+        activitiesWithMetrics,
         locale,
+      ),
+      todayProgress: calculateTodayProgress(
+        metricActivities,
+        completions,
+        now,
       ),
     });
   } catch (error) {
@@ -362,6 +478,10 @@ export const updatePlannedActivity = async (
       updateData.description = cleanText(req.body.description);
     }
 
+    if (req.body.motivationText !== undefined) {
+      updateData.motivationText = cleanText(req.body.motivationText);
+    }
+
     if (req.body.type !== undefined) {
       if (!isActivityType(req.body.type)) {
         res.status(400).json({ error: `Type must be one of: ${validTypes.join(', ')}` });
@@ -395,7 +515,7 @@ export const updatePlannedActivity = async (
     }
 
     if (req.body.timezone !== undefined) {
-      updateData.timezone = normalizeTimezone(req.body.timezone);
+      updateData.timezone = normalizeTimezone(cleanText(req.body.timezone) ?? 'UTC');
     }
 
     if (nextScheduleType === 'DATE') {
@@ -434,7 +554,9 @@ export const updatePlannedActivity = async (
     }
 
     const textChanged =
-      req.body.title !== undefined || req.body.description !== undefined;
+      req.body.title !== undefined ||
+      req.body.description !== undefined ||
+      req.body.motivationText !== undefined;
     await prisma.$transaction(async (tx) => {
       await tx.plannedActivity.update({
         where: { id: req.params.id },
@@ -450,7 +572,7 @@ export const updatePlannedActivity = async (
 
     const updated = await prisma.plannedActivity.findUniqueOrThrow({
       where: { id: req.params.id },
-      include: { translations: true },
+      include: translationInclude(locale),
     });
     const [plannedWithState] = await addDailyCompletionState([updated]);
     const [localizedActivity] = await localizePlannedActivities(
@@ -494,7 +616,7 @@ export const completePlannedActivity = async (
     const locale = getRequestLocale(req);
     const plannedActivity = await prisma.plannedActivity.findFirst({
       where: { id: req.params.id, userId: req.user.id },
-      include: { translations: true },
+      include: translationInclude(locale),
     });
 
     if (!plannedActivity) {
@@ -551,12 +673,17 @@ export const completePlannedActivity = async (
         },
       });
 
-      const currentSourceHash = sourceTextHash(
+      const plannedSourceHash = sourceTextHash(
+        plannedActivity.title,
+        plannedActivity.description,
+        plannedActivity.motivationText,
+      );
+      const activitySourceHash = sourceTextHash(
         plannedActivity.title,
         plannedActivity.description,
       );
       const currentTranslations = plannedActivity.translations.filter(
-        (translation) => translation.sourceHash === currentSourceHash,
+        (translation) => translation.sourceHash === plannedSourceHash,
       );
 
       if (currentTranslations.length > 0) {
@@ -566,7 +693,7 @@ export const completePlannedActivity = async (
             locale: translation.locale,
             title: translation.title,
             description: translation.description,
-            sourceHash: translation.sourceHash,
+            sourceHash: activitySourceHash,
           })),
           skipDuplicates: true,
         });
@@ -590,7 +717,7 @@ export const completePlannedActivity = async (
     );
     const activityWithTranslations = await prisma.activity.findUniqueOrThrow({
       where: { id: activity.id },
-      include: { translations: true },
+      include: translationInclude(locale),
     });
     const [localizedActivity] = await localizeActivities(
       [activityWithTranslations],

@@ -1,16 +1,18 @@
+import { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { UserAvatar } from '../../components/UserAvatar';
 import { useT } from '../../hooks/useT';
-import { useSettingsStore } from '../../stores/settings.store';
+import { useTheme } from '../../hooks/useTheme';
 
 export default function ProfileScreen() {
   const t = useT();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { user, logout } = useAuthStore();
-  const { language, toggleLanguage } = useSettingsStore();
 
   const handleLogout = () => {
     Alert.alert(t('profile.logOut'), t('profile.logOutConfirm'), [
@@ -49,12 +51,6 @@ export default function ProfileScreen() {
         <Text style={styles.actionText}>{t('profile.settings')}</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.actionButton} onPress={toggleLanguage}>
-        <Text style={styles.actionText}>
-          {t('common.language')}: {language === 'en' ? t('common.english') : t('common.ukrainian')}
-        </Text>
-      </TouchableOpacity>
-
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutText}>{t('profile.logOut')}</Text>
       </TouchableOpacity>
@@ -62,7 +58,10 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.xl, alignItems: 'center' },
   username: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xs, marginTop: spacing.md },
@@ -97,4 +96,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logoutText: { ...typography.bodyBold, color: colors.danger },
-});
+  });
+};

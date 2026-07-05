@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,16 @@ import {
 import { useFocusEffect } from 'expo-router';
 import api from '../../services/api';
 import { Achievement } from '../../types';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
 import { useSettingsStore } from '../../stores/settings.store';
 
 export default function AchievementsScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((state) => state.language);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,10 +113,18 @@ export default function AchievementsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
   summary: {
     backgroundColor: colors.primary,
     borderRadius: borderRadius.md,
@@ -120,7 +132,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     alignItems: 'center',
   },
-  summaryText: { ...typography.bodyBold, color: '#fff' },
+  summaryText: { ...typography.bodyBold, color: colors.textOnPrimary },
   sectionTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.sm },
   grid: {
     flexDirection: 'row',
@@ -142,4 +154,5 @@ const styles = StyleSheet.create({
   desc: { ...typography.tiny, color: colors.textSecondary, textAlign: 'center', marginTop: 2 },
   lockedText: { color: colors.textMuted },
   reward: { ...typography.tiny, color: colors.xpGold, marginTop: spacing.xs },
-});
+  });
+};

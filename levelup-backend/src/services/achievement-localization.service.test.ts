@@ -18,6 +18,11 @@ const achievement = {
       name: 'Перший крок',
       description: 'Запиши свою першу активність',
     },
+    {
+      locale: 'ja',
+      name: 'はじめの一歩',
+      description: '最初のアクティビティを記録する',
+    },
   ],
 };
 
@@ -27,6 +32,13 @@ test('achievement localization selects the requested translation', () => {
   assert.equal(localized.name, 'Перший крок');
   assert.equal(localized.description, 'Запиши свою першу активність');
   assert.equal('translations' in localized, false);
+});
+
+test('achievement localization supports additional application locales', () => {
+  const localized = localizeAchievement(achievement, 'ja');
+
+  assert.equal(localized.name, 'はじめの一歩');
+  assert.equal(localized.description, '最初のアクティビティを記録する');
 });
 
 test('achievement localization falls back to canonical English fields', () => {

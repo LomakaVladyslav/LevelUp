@@ -7,6 +7,12 @@ import { calculateAdaptiveXp } from '../services/adaptive-xp.service';
 import { localizeActivities } from '../services/content-translation.service';
 import { getRequestLocale } from '../utils/locale';
 
+const translationInclude = (locale: string) => ({
+  translations: {
+    where: { locale: { in: [locale, 'en'] } },
+  },
+});
+
 // POST /api/activities
 // This is the most important endpoint — it's the core game loop
 export const createActivity = async (
@@ -95,7 +101,7 @@ export const getActivities = async (
     const [activities, total] = await Promise.all([
       prisma.activity.findMany({
         where: { userId },
-        include: { translations: true },
+        include: translationInclude(locale),
         orderBy: { completedAt: 'desc' },
         skip,
         take: limit,
@@ -126,7 +132,7 @@ export const getActivityById = async (
     const locale = getRequestLocale(req);
     const activity = await prisma.activity.findFirst({
       where: { id: req.params.id, userId: req.user.id },
-      include: { translations: true },
+      include: translationInclude(locale),
     });
 
     if (!activity) {

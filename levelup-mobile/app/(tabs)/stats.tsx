@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,17 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { statsService } from '../../services/stats.service';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
 import { useSettingsStore } from '../../stores/settings.store';
+import { getLocale } from '../../constants/i18n';
 
 export default function StatsScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
   const [weeklyData, setWeeklyData] = useState<
     { date: string; count: number; xpEarned: number }[]
@@ -85,7 +90,7 @@ export default function StatsScreen() {
       <View style={styles.chartContainer}>
         {weeklyData.map((day) => {
           const barHeight = maxCount > 0 ? (day.count / maxCount) * 120 : 0;
-          const dayLabel = new Date(day.date).toLocaleDateString(language, { weekday: 'short' });
+          const dayLabel = new Date(day.date).toLocaleDateString(getLocale(language), { weekday: 'short' });
           return (
             <View key={day.date} style={styles.barWrapper}>
               <Text style={styles.barCount}>{day.count > 0 ? day.count : ''}</Text>
@@ -108,7 +113,7 @@ export default function StatsScreen() {
         return (
           <View key={day.date} style={styles.xpRow}>
             <Text style={styles.xpDay}>
-              {new Date(day.date).toLocaleDateString(language, { weekday: 'short', month: 'short', day: 'numeric' })}
+              {new Date(day.date).toLocaleDateString(getLocale(language), { weekday: 'short', month: 'short', day: 'numeric' })}
             </Text>
             <View style={styles.xpTrack}>
               <View style={[styles.xpBar, { width: `${pct}%` as any }]} />
@@ -121,10 +126,18 @@ export default function StatsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
   row: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   summaryCard: {
     flex: 1,
@@ -171,4 +184,5 @@ const styles = StyleSheet.create({
   },
   xpBar: { height: '100%', backgroundColor: colors.xpGold, borderRadius: 4 },
   xpValue: { ...typography.tiny, color: colors.xpGold, width: 30, textAlign: 'right' },
-});
+  });
+};

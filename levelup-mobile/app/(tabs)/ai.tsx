@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,10 +14,13 @@ import {
 import { aiService, AiMessage } from '../../services/ai.service';
 import { plannedActivityService } from '../../services/plannedActivity.service';
 import { notificationService } from '../../services/notification.service';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
 import { useSettingsStore } from '../../stores/settings.store';
 import { PlannedActivityScheduleType, SuggestedActivity } from '../../types';
+import { getLocale } from '../../constants/i18n';
+import { getApiErrorMessage } from '../../utils/api-error';
 
 const getDeviceTimezone = () => {
   try {
@@ -29,6 +32,9 @@ const getDeviceTimezone = () => {
 
 export default function AiScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
   const listRef = useRef<FlatList<AiMessage>>(null);
   const [messages, setMessages] = useState<AiMessage[]>([]);
@@ -57,7 +63,7 @@ export default function AiScreen() {
 
     const date = new Date();
     date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-    return date.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(getLocale(language), { hour: '2-digit', minute: '2-digit' });
   };
 
   const suggestionMeta = (suggestion: SuggestedActivity) => {
@@ -97,7 +103,7 @@ export default function AiScreen() {
     } catch (error: any) {
       Alert.alert(
         t('ai.failed'),
-        error.response?.data?.error || error.message || t('common.error'),
+        getApiErrorMessage(error, t, 'ai.failed'),
       );
     } finally {
       setSending(false);
@@ -141,7 +147,7 @@ export default function AiScreen() {
     } catch (error: any) {
       Alert.alert(
         t('common.error'),
-        error.response?.data?.error || error.message || t('common.error'),
+        getApiErrorMessage(error, t, 'common.somethingWrong'),
       );
     } finally {
       setAddingSuggestionsKey(null);
@@ -268,7 +274,10 @@ export default function AiScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   list: { padding: spacing.md, gap: spacing.sm },
   emptyList: { flexGrow: 1, justifyContent: 'center' },
@@ -364,4 +373,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { opacity: 0.6 },
   sendText: { ...typography.bodyBold, color: colors.textOnPrimary },
-});
+  });
+};

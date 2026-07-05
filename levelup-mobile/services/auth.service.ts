@@ -1,6 +1,11 @@
 import api from './api';
 import { User } from '../types';
 
+export type AuthAvailability = {
+  emailAvailable?: boolean;
+  usernameAvailable?: boolean;
+};
+
 const appendAvatar = (formData: FormData, avatarUri?: string | null) => {
   if (!avatarUri) return;
 
@@ -16,6 +21,11 @@ const appendAvatar = (formData: FormData, avatarUri?: string | null) => {
 };
 
 export const authService = {
+  availability: async (params: { email?: string; username?: string }) => {
+    const { data } = await api.post('/auth/availability', params);
+    return data as AuthAvailability;
+  },
+
   register: async (
     email: string,
     username: string,
@@ -41,6 +51,16 @@ export const authService = {
   login: async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email, password });
     return data as { token: string; user: User };
+  },
+
+  forgotPassword: async (email: string) => {
+    const { data } = await api.post('/auth/forgot-password', { email });
+    return data as { message: string };
+  },
+
+  resetPassword: async (token: string, password: string) => {
+    const { data } = await api.post('/auth/reset-password', { token, password });
+    return data as { message: string };
   },
 
   getMe: async () => {

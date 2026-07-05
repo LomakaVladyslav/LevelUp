@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Recommendation } from '../types';
 import { useT } from '../hooks/useT';
+import { useTheme } from '../hooks/useTheme';
 import {
+  AppTheme,
   borderRadius,
-  colors,
   spacing,
   typography,
 } from '../constants/theme';
@@ -17,6 +19,9 @@ export function RecommendationCard({
   recommendations,
 }: RecommendationCardProps) {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   if (recommendations.length === 0) return null;
 
@@ -84,7 +89,10 @@ export function RecommendationCard({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   card: {
     backgroundColor: colors.primaryLight,
     borderRadius: borderRadius.md,
@@ -120,4 +128,5 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 20,
   },
-});
+  });
+};

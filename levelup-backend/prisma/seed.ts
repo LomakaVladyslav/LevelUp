@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { getAdditionalAchievementTranslations } from './achievement-localizations';
 
 const prisma = new PrismaClient();
 
@@ -220,6 +221,7 @@ async function main() {
         name: seed.uk.name,
         description: seed.uk.description,
       },
+      ...getAdditionalAchievementTranslations(seed.code, seed.condition),
     ];
 
     for (const translation of translations) {

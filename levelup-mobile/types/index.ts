@@ -33,8 +33,10 @@ export interface PlannedActivity {
   type: ActivityType;
   title: string;
   description?: string | null;
+  motivationText?: string | null;
   displayTitle: string;
   displayDescription?: string | null;
+  displayMotivationText?: string | null;
   scheduleType: PlannedActivityScheduleType;
   dueDate?: string | null;
   dueTimeMinutes?: number | null;
@@ -46,12 +48,20 @@ export interface PlannedActivity {
   updatedAt: string;
   isCompletedToday?: boolean;
   completedTodayAt?: string | null;
+  streakDays?: number | null;
+}
+
+export interface TodayProgress {
+  completed: number;
+  total: number;
+  percentage: number;
 }
 
 export interface PlannedActivityInput {
   type: ActivityType;
   title: string;
   description?: string | null;
+  motivationText?: string | null;
   scheduleType: PlannedActivityScheduleType;
   dueDate?: string | null;
   dueTimeMinutes?: number | null;

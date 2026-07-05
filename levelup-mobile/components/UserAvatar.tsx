@@ -1,6 +1,6 @@
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { getAssetUrl } from '../services/api';
-import { colors } from '../constants/theme';
+import { useTheme } from '../hooks/useTheme';
 
 interface UserAvatarProps {
   username?: string | null;
@@ -9,6 +9,7 @@ interface UserAvatarProps {
 }
 
 export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) {
+  const { colors } = useTheme();
   const source = getAssetUrl(avatarUrl);
   const radius = size / 2;
 
@@ -18,7 +19,12 @@ export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) 
         source={{ uri: source }}
         style={[
           styles.avatar,
-          { width: size, height: size, borderRadius: radius },
+          {
+            width: size,
+            height: size,
+            borderRadius: radius,
+            backgroundColor: colors.surfaceSecondary,
+          },
         ]}
       />
     );
@@ -28,10 +34,20 @@ export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) 
     <View
       style={[
         styles.fallback,
-        { width: size, height: size, borderRadius: radius },
+        {
+          width: size,
+          height: size,
+          borderRadius: radius,
+          backgroundColor: colors.primary,
+        },
       ]}
     >
-      <Text style={[styles.initial, { fontSize: size * 0.42 }]}>
+      <Text
+        style={[
+          styles.initial,
+          { color: colors.textOnPrimary, fontSize: size * 0.42 },
+        ]}
+      >
         {username?.[0]?.toUpperCase() ?? '?'}
       </Text>
     </View>
@@ -39,11 +55,10 @@ export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) 
 }
 
 const styles = StyleSheet.create({
-  avatar: { backgroundColor: colors.surfaceSecondary },
+  avatar: {},
   fallback: {
-    backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  initial: { color: '#fff', fontWeight: '700' },
+  initial: { fontWeight: '700' },
 });

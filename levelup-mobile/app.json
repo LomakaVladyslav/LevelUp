@@ -22,10 +22,14 @@
       ]
     ],
     "android": {
+      "package": "com.vladyslav.levelup",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6C47FF"
       }
+    },
+    "ios": {
+      "bundleIdentifier": "com.vladyslav.levelup"
     }
   }
 }

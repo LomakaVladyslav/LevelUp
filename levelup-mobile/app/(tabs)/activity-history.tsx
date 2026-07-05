@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -12,20 +12,26 @@ import { useFocusEffect } from 'expo-router';
 import { activityService } from '../../services/activity.service';
 import { Activity, ActivityType } from '../../types';
 import {
-  activityColor,
   activityEmoji,
+  AppTheme,
   borderRadius,
-  colors,
   spacing,
   typography,
 } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
 import { useSettingsStore } from '../../stores/settings.store';
+import { getLocale } from '../../constants/i18n';
+import { ActivityDetailsModal } from '../../components/ActivityDetailsModal';
 
 export default function ActivityHistoryScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors, activityColor } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -77,63 +83,89 @@ export default function ActivityHistoryScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            setRefreshing(true);
-            void loadActivities(1);
-          }}
-        />
-      }
-    >
-      {activities.length === 0 ? (
-        <Text style={styles.emptyText}>{t('home.noActivities')}</Text>
-      ) : (
-        activities.map((activity) => (
-          <View key={activity.id} style={styles.row}>
-            <View style={[styles.typeDot, { backgroundColor: activityColor[activity.type] }]} />
-            <Text style={styles.activityEmoji}>{activityEmoji[activity.type]}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>
-                {activity.displayTitle || activity.title}
-              </Text>
-              <Text style={styles.rowMeta}>
-                {activityLabel(activity.type)} • {new Date(activity.completedAt).toLocaleString(language)}
-              </Text>
-            </View>
-            <Text style={styles.rowXp}>+{activity.xpEarned}</Text>
-          </View>
-        ))
-      )}
+    <>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void loadActivities(1);
+            }}
+          />
+        }
+      >
+        {activities.length === 0 ? (
+          <Text style={styles.emptyText}>{t('home.noActivities')}</Text>
+        ) : (
+          activities.map((activity) => (
+            <TouchableOpacity
+              key={activity.id}
+              style={styles.row}
+              onPress={() => setSelectedActivity(activity)}
+              activeOpacity={0.75}
+            >
+              <View
+                style={[
+                  styles.typeDot,
+                  { backgroundColor: activityColor[activity.type] },
+                ]}
+              />
+              <Text style={styles.activityEmoji}>{activityEmoji[activity.type]}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>
+                  {activity.displayTitle || activity.title}
+                </Text>
+                <Text style={styles.rowMeta}>
+                  {activityLabel(activity.type)} •{' '}
+                  {new Date(activity.completedAt).toLocaleString(getLocale(language))}
+                </Text>
+              </View>
+              <Text style={styles.rowXp}>+{activity.xpEarned}</Text>
+            </TouchableOpacity>
+          ))
+        )}
 
-      {page < totalPages ? (
-        <TouchableOpacity
-          style={[styles.loadMoreButton, loadingMore && { opacity: 0.6 }]}
-          disabled={loadingMore}
-          onPress={() => {
-            setLoadingMore(true);
-            void loadActivities(page + 1, true);
-          }}
-        >
-          {loadingMore ? (
-            <ActivityIndicator color={colors.textOnPrimary} />
-          ) : (
-            <Text style={styles.loadMoreText}>{t('activities.loadMore')}</Text>
-          )}
-        </TouchableOpacity>
-      ) : null}
-    </ScrollView>
+        {page < totalPages ? (
+          <TouchableOpacity
+            style={[styles.loadMoreButton, loadingMore && { opacity: 0.6 }]}
+            disabled={loadingMore}
+            onPress={() => {
+              setLoadingMore(true);
+              void loadActivities(page + 1, true);
+            }}
+          >
+            {loadingMore ? (
+              <ActivityIndicator color={colors.textOnPrimary} />
+            ) : (
+              <Text style={styles.loadMoreText}>{t('activities.loadMore')}</Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
+      </ScrollView>
+      <ActivityDetailsModal
+        activity={selectedActivity}
+        visible={Boolean(selectedActivity)}
+        onClose={() => setSelectedActivity(null)}
+      />
+    </>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md, paddingBottom: spacing.xl },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
   emptyText: { ...typography.body, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.xl },
   row: {
     flexDirection: 'row',
@@ -158,4 +190,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   loadMoreText: { ...typography.bodyBold, color: colors.textOnPrimary },
-});
+  });
+};

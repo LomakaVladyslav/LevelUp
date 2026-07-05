@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import OpenAI from 'openai';
 import prisma from '../utils/prisma';
+import { getRequestLocale, localeNames } from '../utils/locale';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -102,22 +103,31 @@ const parseStructuredReply = (content: string): StructuredAiReply => {
 
 export const chat = async (req: Request, res: Response): Promise<void> => {
   try {
+    const locale = getRequestLocale(req);
+
     if (!process.env.OPENAI_API_KEY) {
       res.status(503).json({
         error: 'AI chat is not configured yet. Add OPENAI_API_KEY on the backend.',
+        errorCode: 'AI_NOT_CONFIGURED',
       });
       return;
     }
 
     const messages = req.body.messages;
     if (!Array.isArray(messages) || messages.length === 0) {
-      res.status(400).json({ error: 'Messages are required' });
+      res.status(400).json({
+        error: 'Messages are required',
+        errorCode: 'AI_MESSAGES_REQUIRED',
+      });
       return;
     }
 
     const cleanedMessages = messages.slice(-12).filter(isChatMessage);
     if (cleanedMessages.length === 0) {
-      res.status(400).json({ error: 'Messages must include role and content' });
+      res.status(400).json({
+        error: 'Messages must include role and content',
+        errorCode: 'AI_MESSAGES_INVALID',
+      });
       return;
     }
 
@@ -146,7 +156,9 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
           content:
             [
               'You are LevelUp AI, a concise productivity and planning coach inside a gamified task app.',
-              'Reply in the same language as the user. Keep advice practical and focused on today.',
+              `Reply in ${localeNames[locale]}, matching the selected application language even if the user writes in another language.`,
+              `Write all suggested activity titles and descriptions in ${localeNames[locale]}.`,
+              'Keep advice practical and focused on today.',
               'When the user asks to plan, schedule, create, add, or break down activities, include suggestedActivities.',
               'Use types STUDY, WORKOUT, HABIT, CUSTOM. Map sport/training to WORKOUT, habits to HABIT, learning/study to STUDY, everything else to CUSTOM.',
               'Use scheduleType SIMPLE for no fixed date, DAILY for recurring daily tasks, DATE when a concrete date is known.',
@@ -215,7 +227,10 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
     const content = response.output_text?.trim();
 
     if (!content) {
-      res.status(502).json({ error: 'AI returned an empty response' });
+      res.status(502).json({
+        error: 'AI returned an empty response',
+        errorCode: 'AI_EMPTY_RESPONSE',
+      });
       return;
     }
 
@@ -229,6 +244,9 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     console.error('AI chat error:', error);
-    res.status(500).json({ error: 'AI chat failed' });
+    res.status(500).json({
+      error: 'AI chat failed',
+      errorCode: 'AI_CHAT_FAILED',
+    });
   }
 };

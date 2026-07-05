@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,32 +15,185 @@ import * as ImagePicker from 'expo-image-picker';
 import { Link } from 'expo-router';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/auth.store';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
+import { getApiErrorMessage } from '../../utils/api-error';
+
+type AccountFieldErrors = {
+  email?: string;
+  username?: string;
+  password?: string;
+};
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [step, setStep] = useState<1 | 2>(1);
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [age, setAge] = useState('');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<AccountFieldErrors>({});
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  const [checkingAvailability, setCheckingAvailability] = useState({
+    email: false,
+    username: false,
+  });
   const [loading, setLoading] = useState(false);
+  const emailCheckId = useRef(0);
+  const usernameCheckId = useRef(0);
   const setAuth = useAuthStore((s) => s.setAuth);
 
-  const validateAccountStep = () => {
-    if (!email || !username || !password) {
-      Alert.alert(t('common.error'), t('auth.fillAll'));
-      return false;
-    }
+  const setFieldError = useCallback(
+    (field: keyof AccountFieldErrors, message?: string) => {
+      setFieldErrors((current) => ({ ...current, [field]: message }));
+    },
+    [],
+  );
 
-    if (password.length < 6) {
-      Alert.alert(t('common.error'), t('register.passwordShort'));
-      return false;
-    }
+  const getEmailError = useCallback(
+    (value: string) => {
+      if (!value.trim()) return t('auth.emailRequired');
+      if (!EMAIL_REGEX.test(value.trim())) return t('auth.emailInvalid');
+      return undefined;
+    },
+    [t],
+  );
 
-    return true;
+  const getUsernameError = useCallback(
+    (value: string) =>
+      value.trim() ? undefined : t('auth.usernameRequired'),
+    [t],
+  );
+
+  const getPasswordError = useCallback(
+    (value: string) => {
+      if (!value) return t('auth.passwordRequired');
+      if (value.length < 6) return t('register.passwordShort');
+      return undefined;
+    },
+    [t],
+  );
+
+  const checkEmailAvailability = useCallback(
+    async (value: string) => {
+      const normalizedEmail = value.trim().toLowerCase();
+      const localError = getEmailError(normalizedEmail);
+
+      if (localError) {
+        setFieldError('email', localError);
+        return false;
+      }
+
+      const requestId = ++emailCheckId.current;
+      setCheckingAvailability((current) => ({ ...current, email: true }));
+
+      try {
+        const result = await authService.availability({ email: normalizedEmail });
+        if (requestId !== emailCheckId.current) return false;
+
+        const message =
+          result.emailAvailable === false ? t('auth.emailInUse') : undefined;
+        setFieldError('email', message);
+        return !message;
+      } catch (error: any) {
+        if (requestId === emailCheckId.current) {
+          setFieldError(
+            'email',
+            getApiErrorMessage(error, t, 'common.somethingWrong'),
+          );
+        }
+        return false;
+      } finally {
+        if (requestId === emailCheckId.current) {
+          setCheckingAvailability((current) => ({ ...current, email: false }));
+        }
+      }
+    },
+    [getEmailError, setFieldError, t],
+  );
+
+  const checkUsernameAvailability = useCallback(
+    async (value: string) => {
+      const normalizedUsername = value.trim();
+      const localError = getUsernameError(normalizedUsername);
+
+      if (localError) {
+        setFieldError('username', localError);
+        return false;
+      }
+
+      const requestId = ++usernameCheckId.current;
+      setCheckingAvailability((current) => ({ ...current, username: true }));
+
+      try {
+        const result = await authService.availability({
+          username: normalizedUsername,
+        });
+        if (requestId !== usernameCheckId.current) return false;
+
+        const message =
+          result.usernameAvailable === false
+            ? t('auth.usernameInUse')
+            : undefined;
+        setFieldError('username', message);
+        return !message;
+      } catch (error: any) {
+        if (requestId === usernameCheckId.current) {
+          setFieldError(
+            'username',
+            getApiErrorMessage(error, t, 'common.somethingWrong'),
+          );
+        }
+        return false;
+      } finally {
+        if (requestId === usernameCheckId.current) {
+          setCheckingAvailability((current) => ({
+            ...current,
+            username: false,
+          }));
+        }
+      }
+    },
+    [getUsernameError, setFieldError, t],
+  );
+
+  useEffect(() => {
+    if (!emailTouched) return undefined;
+
+    const timer = setTimeout(() => {
+      void checkEmailAvailability(email);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [checkEmailAvailability, email, emailTouched]);
+
+  useEffect(() => {
+    if (!usernameTouched) return undefined;
+
+    const timer = setTimeout(() => {
+      void checkUsernameAvailability(username);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [checkUsernameAvailability, username, usernameTouched]);
+
+  const validateLocalAccountFields = () => {
+    const errors = {
+      email: getEmailError(email),
+      username: getUsernameError(username),
+      password: getPasswordError(password),
+    };
+
+    setFieldErrors(errors);
+    return !errors.email && !errors.username && !errors.password;
   };
 
   const parsedAge = () => Number(age);
@@ -64,8 +217,18 @@ export default function RegisterScreen() {
     }
   };
 
-  const handleNext = () => {
-    if (validateAccountStep()) {
+  const handleNext = async () => {
+    setEmailTouched(true);
+    setUsernameTouched(true);
+
+    if (!validateLocalAccountFields()) return;
+
+    const [emailAvailable, usernameAvailable] = await Promise.all([
+      checkEmailAvailability(email),
+      checkUsernameAvailability(username),
+    ]);
+
+    if (emailAvailable && usernameAvailable) {
       setStep(2);
     }
   };
@@ -80,22 +243,49 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       const { token, user } = await authService.register(
-        email,
-        username,
+        email.trim().toLowerCase(),
+        username.trim(),
         password,
         ageValue,
         avatarUri,
       );
       await setAuth(token, user);
     } catch (error: any) {
+      const errorCode = error?.response?.data?.errorCode;
+
+      if (errorCode === 'AUTH_EMAIL_IN_USE') {
+        setFieldError('email', t('auth.emailInUse'));
+        setStep(1);
+        return;
+      }
+
+      if (errorCode === 'AUTH_USERNAME_IN_USE') {
+        setFieldError('username', t('auth.usernameInUse'));
+        setStep(1);
+        return;
+      }
+
       Alert.alert(
         t('register.failed'),
-        error.response?.data?.error || t('common.somethingWrong'),
+        getApiErrorMessage(error, t, 'common.somethingWrong'),
       );
     } finally {
       setLoading(false);
     }
   };
+
+  const accountStepComplete =
+    Boolean(email.trim()) &&
+    Boolean(username.trim()) &&
+    password.length >= 6 &&
+    EMAIL_REGEX.test(email.trim());
+  const hasAccountErrors = Boolean(
+    fieldErrors.email || fieldErrors.username || fieldErrors.password,
+  );
+  const availabilityPending =
+    checkingAvailability.email || checkingAvailability.username;
+  const nextDisabled =
+    !accountStepComplete || hasAccountErrors || availabilityPending;
 
   return (
     <KeyboardAvoidingView
@@ -110,32 +300,72 @@ export default function RegisterScreen() {
             <Text style={styles.subtitle}>{t('register.subtitle')}</Text>
 
             <TextInput
-              style={styles.input}
+              style={[styles.input, fieldErrors.email ? styles.inputError : null]}
               placeholder={t('auth.email')}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(value) => {
+                setEmail(value);
+                setFieldError('email');
+              }}
+              onBlur={() => setEmailTouched(true)}
               keyboardType="email-address"
               autoCapitalize="none"
               placeholderTextColor={colors.textMuted}
             />
+            {checkingAvailability.email ? (
+              <Text style={styles.fieldHintText}>
+                {t('register.checkingAvailability')}
+              </Text>
+            ) : fieldErrors.email ? (
+              <Text style={styles.fieldErrorText}>{fieldErrors.email}</Text>
+            ) : null}
+
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                fieldErrors.username ? styles.inputError : null,
+              ]}
               placeholder={t('register.username')}
               value={username}
-              onChangeText={setUsername}
+              onChangeText={(value) => {
+                setUsername(value);
+                setFieldError('username');
+              }}
+              onBlur={() => setUsernameTouched(true)}
               autoCapitalize="none"
               placeholderTextColor={colors.textMuted}
             />
+            {checkingAvailability.username ? (
+              <Text style={styles.fieldHintText}>
+                {t('register.checkingAvailability')}
+              </Text>
+            ) : fieldErrors.username ? (
+              <Text style={styles.fieldErrorText}>{fieldErrors.username}</Text>
+            ) : null}
+
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                fieldErrors.password ? styles.inputError : null,
+              ]}
               placeholder={t('register.passwordPlaceholder')}
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(value) => {
+                setPassword(value);
+                setFieldError('password', value ? getPasswordError(value) : undefined);
+              }}
               secureTextEntry
               placeholderTextColor={colors.textMuted}
             />
+            {fieldErrors.password ? (
+              <Text style={styles.fieldErrorText}>{fieldErrors.password}</Text>
+            ) : null}
 
-            <TouchableOpacity style={styles.button} onPress={handleNext}>
+            <TouchableOpacity
+              style={[styles.button, nextDisabled && styles.buttonDisabled]}
+              onPress={handleNext}
+              disabled={nextDisabled}
+            >
               <Text style={styles.buttonText}>{t('common.next')}</Text>
             </TouchableOpacity>
           </>
@@ -178,7 +408,11 @@ export default function RegisterScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.button, styles.flexButton, loading && styles.buttonDisabled]}
+                style={[
+                  styles.button,
+                  styles.flexButton,
+                  loading && styles.buttonDisabled,
+                ]}
                 onPress={handleRegister}
                 disabled={loading}
               >
@@ -198,7 +432,10 @@ export default function RegisterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   inner: {
     flexGrow: 1,
@@ -227,6 +464,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     ...typography.body,
     color: colors.textPrimary,
+  },
+  inputError: { borderColor: colors.danger },
+  fieldErrorText: {
+    ...typography.small,
+    color: colors.danger,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  fieldHintText: {
+    ...typography.small,
+    color: colors.textSecondary,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.sm,
   },
   button: {
     backgroundColor: colors.primary,
@@ -272,4 +522,5 @@ const styles = StyleSheet.create({
     color: colors.primary,
     ...typography.small,
   },
-});
+  });
+};

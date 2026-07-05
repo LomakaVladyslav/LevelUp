@@ -25,6 +25,20 @@ model User {
   streaks          Streak[]
   xpHistory        XpHistory[]
   goals            Goal[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt, expiresAt])
 }
 
 model Activity {
@@ -46,6 +60,7 @@ model Activity {
 
   @@unique([userId, plannedActivityId, completedForDate])
   @@index([plannedActivityId])
+  @@index([userId, completedAt])
 }
 
 model ActivityTranslation {
@@ -75,6 +90,7 @@ model PlannedActivity {
   type           ActivityType
   title          String
   description    String?
+  motivationText String?
   scheduleType   PlannedActivityScheduleType @default(SIMPLE)
   dueDate        DateTime?
   dueTimeMinutes Int?
@@ -91,6 +107,7 @@ model PlannedActivity {
 
   @@index([userId, status])
   @@index([userId, scheduleType])
+  @@index([userId, status, dueDate, createdAt])
 }
 
 model PlannedActivityTranslation {
@@ -99,6 +116,7 @@ model PlannedActivityTranslation {
   locale            String
   title             String
   description       String?
+  motivationText    String?
   sourceHash        String
 
   plannedActivity PlannedActivity @relation(fields: [plannedActivityId], references: [id], onDelete: Cascade)
@@ -178,6 +196,8 @@ model XpHistory {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model Goal {

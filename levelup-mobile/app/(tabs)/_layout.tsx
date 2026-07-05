@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { ComponentProps } from 'react';
-import { colors } from '../../constants/theme';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
+import { LanguageSelector } from '../../components/LanguageSelector';
 
 type TabRouteName =
   | 'index'
@@ -40,6 +41,7 @@ function getTabIconName(
 
 export default function TabLayout() {
   const t = useT();
+  const { colors } = useTheme();
 
   return (
     <Tabs
@@ -87,7 +89,11 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="profile"
-        options={{ title: t('tabs.profile'), tabBarLabel: t('tabs.profile') }}
+        options={{
+          title: t('tabs.profile'),
+          tabBarLabel: t('tabs.profile'),
+          headerRight: () => <LanguageSelector />,
+        }}
       />
       <Tabs.Screen
         name="settings"

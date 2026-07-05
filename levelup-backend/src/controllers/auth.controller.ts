@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { User } from '@prisma/client';
 import prisma from '../utils/prisma';
 import { avatarUrlForFile, deleteAvatarFile } from '../utils/avatar';
+import { sendPasswordResetEmail } from '../services/mail.service';
 
 type PublicUser = Pick<
   User,
@@ -19,6 +21,35 @@ const toPublicUser = (user: PublicUser) => ({
   avatarUrl: user.avatarUrl,
   age: user.age,
 });
+
+const PASSWORD_RESET_TOKEN_BYTES = 32;
+const PASSWORD_RESET_EXPIRY_MINUTES = 30;
+const PASSWORD_MIN_LENGTH = 6;
+
+const normalizeEmail = (value: unknown): string =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const normalizeUsername = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : '';
+
+const isValidEmail = (email: string): boolean =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const hashResetToken = (token: string): string =>
+  crypto.createHash('sha256').update(token).digest('hex');
+
+const createPasswordResetToken = () => crypto.randomBytes(PASSWORD_RESET_TOKEN_BYTES).toString('hex');
+
+const createPasswordResetUrl = (token: string): string => {
+  const baseUrl =
+    process.env.PASSWORD_RESET_URL_BASE || 'levelup://auth/reset-password';
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}token=${encodeURIComponent(token)}`;
+};
+
+const resetRequestResponse = {
+  message: 'If an account exists for this email, a password reset link has been sent.',
+};
 
 const parseOptionalAge = (value: unknown): number | null => {
   if (value === undefined || value === null || value === '') {
@@ -39,20 +70,79 @@ const cleanupUploadedAvatar = (file?: Express.Multer.File): void => {
   }
 };
 
-// POST /api/auth/register
-export const register = async (req: Request, res: Response): Promise<void> => {
+// POST /api/auth/availability
+export const availability = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
   try {
-    const { email, username, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const username = normalizeUsername(req.body.username);
 
-    if (!email || !username || !password) {
-      cleanupUploadedAvatar(req.file);
-      res.status(400).json({ error: 'Email, username and password are required' });
+    if (!email && !username) {
+      res.status(400).json({
+        error: 'Email or username is required',
+        errorCode: 'AUTH_AVAILABILITY_REQUIRED',
+      });
       return;
     }
 
-    if (password.length < 6) {
+    if (email && !isValidEmail(email)) {
+      res.status(400).json({
+        error: 'Email is invalid',
+        errorCode: 'AUTH_EMAIL_INVALID',
+      });
+      return;
+    }
+
+    const [emailUser, usernameUser] = await Promise.all([
+      email ? prisma.user.findUnique({ where: { email } }) : Promise.resolve(null),
+      username
+        ? prisma.user.findUnique({ where: { username } })
+        : Promise.resolve(null),
+    ]);
+
+    res.json({
+      ...(email ? { emailAvailable: !emailUser } : {}),
+      ...(username ? { usernameAvailable: !usernameUser } : {}),
+    });
+  } catch (error) {
+    console.error('Availability error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// POST /api/auth/register
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const username = normalizeUsername(req.body.username);
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+
+    if (!email || !username || !password) {
       cleanupUploadedAvatar(req.file);
-      res.status(400).json({ error: 'Password must be at least 6 characters' });
+      res.status(400).json({
+        error: 'Email, username and password are required',
+        errorCode: 'AUTH_EMAIL_USERNAME_REQUIRED',
+      });
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      cleanupUploadedAvatar(req.file);
+      res.status(400).json({
+        error: 'Email is invalid',
+        errorCode: 'AUTH_EMAIL_INVALID',
+      });
+      return;
+    }
+
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      cleanupUploadedAvatar(req.file);
+      res.status(400).json({
+        error: 'Password must be at least 6 characters',
+        errorCode: 'AUTH_PASSWORD_SHORT',
+      });
       return;
     }
 
@@ -61,18 +151,33 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       age = parseOptionalAge(req.body.age);
     } catch (error) {
       cleanupUploadedAvatar(req.file);
-      res.status(400).json({ error: (error as Error).message });
+      res.status(400).json({
+        error: (error as Error).message,
+        errorCode: 'AUTH_AGE_INVALID',
+      });
       return;
     }
 
-    // Check if email or username already taken
-    const existing = await prisma.user.findFirst({
-      where: { OR: [{ email }, { username }] },
-    });
+    const [existingEmail, existingUsername] = await Promise.all([
+      prisma.user.findUnique({ where: { email } }),
+      prisma.user.findUnique({ where: { username } }),
+    ]);
 
-    if (existing) {
+    if (existingEmail) {
       cleanupUploadedAvatar(req.file);
-      res.status(400).json({ error: 'Email or username already in use' });
+      res.status(409).json({
+        error: 'Email is already in use',
+        errorCode: 'AUTH_EMAIL_IN_USE',
+      });
+      return;
+    }
+
+    if (existingUsername) {
+      cleanupUploadedAvatar(req.file);
+      res.status(409).json({
+        error: 'Username is already in use',
+        errorCode: 'AUTH_USERNAME_IN_USE',
+      });
       return;
     }
 
@@ -104,24 +209,34 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 // POST /api/auth/login
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
 
     if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required' });
+      res.status(400).json({
+        error: 'Email and password are required',
+        errorCode: 'AUTH_EMAIL_PASSWORD_REQUIRED',
+      });
       return;
     }
 
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      res.status(401).json({ error: 'Invalid email or password' });
+      res.status(401).json({
+        error: 'Invalid email or password',
+        errorCode: 'AUTH_INVALID_CREDENTIALS',
+      });
       return;
     }
 
     const passwordValid = await bcrypt.compare(password, user.passwordHash);
 
     if (!passwordValid) {
-      res.status(401).json({ error: 'Invalid email or password' });
+      res.status(401).json({
+        error: 'Invalid email or password',
+        errorCode: 'AUTH_INVALID_CREDENTIALS',
+      });
       return;
     }
 
@@ -135,6 +250,136 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// POST /api/auth/forgot-password
+export const forgotPassword = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const email = normalizeEmail(req.body.email);
+
+    if (!email) {
+      res.status(400).json({
+        error: 'Email is required',
+        errorCode: 'AUTH_EMAIL_REQUIRED',
+      });
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({
+        error: 'Email is invalid',
+        errorCode: 'AUTH_EMAIL_INVALID',
+      });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (user) {
+      const token = createPasswordResetToken();
+      const tokenHash = hashResetToken(token);
+      const expiresAt = new Date(
+        Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000,
+      );
+
+      await prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+      try {
+        await sendPasswordResetEmail({
+          to: user.email,
+          username: user.username,
+          resetUrl: createPasswordResetUrl(token),
+        });
+      } catch (error) {
+        console.error('Password reset email error:', error);
+      }
+    }
+
+    res.json(resetRequestResponse);
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// POST /api/auth/reset-password
+export const resetPassword = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+
+    if (!token || !password) {
+      res.status(400).json({
+        error: 'Token and password are required',
+        errorCode: 'AUTH_RESET_TOKEN_PASSWORD_REQUIRED',
+      });
+      return;
+    }
+
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      res.status(400).json({
+        error: 'Password must be at least 6 characters',
+        errorCode: 'AUTH_PASSWORD_SHORT',
+      });
+      return;
+    }
+
+    const tokenHash = hashResetToken(token);
+    const resetToken = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!resetToken || resetToken.usedAt) {
+      res.status(400).json({
+        error: 'Password reset token is invalid',
+        errorCode: 'AUTH_RESET_TOKEN_INVALID',
+      });
+      return;
+    }
+
+    if (resetToken.expiresAt <= new Date()) {
+      res.status(400).json({
+        error: 'Password reset token has expired',
+        errorCode: 'AUTH_RESET_TOKEN_EXPIRED',
+      });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const usedAt = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: resetToken.userId },
+        data: { passwordHash },
+      });
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: resetToken.userId,
+          usedAt: null,
+          expiresAt: { gt: usedAt },
+        },
+        data: { usedAt },
+      });
+    });
+
+    res.json({ message: 'Password has been reset.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -174,7 +419,10 @@ export const updateMe = async (req: Request, res: Response): Promise<void> => {
     try {
       age = parseOptionalAge(req.body.age);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      res.status(400).json({
+        error: (error as Error).message,
+        errorCode: 'AUTH_AGE_INVALID',
+      });
       return;
     }
 

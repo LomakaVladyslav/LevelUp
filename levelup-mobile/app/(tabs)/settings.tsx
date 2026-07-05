@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -13,16 +13,21 @@ import * as ImagePicker from 'expo-image-picker';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/auth.store';
 import { useSettingsStore } from '../../stores/settings.store';
-import { colors, spacing, borderRadius, typography } from '../../constants/theme';
+import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
 import { UserAvatar } from '../../components/UserAvatar';
 import { useT } from '../../hooks/useT';
+import { useTheme } from '../../hooks/useTheme';
+import { getApiErrorMessage } from '../../utils/api-error';
 
 export default function SettingsScreen() {
   const t = useT();
+  const theme = useTheme();
+  const { colors } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { user, setUser, logout } = useAuthStore();
   const {
-    language,
-    toggleLanguage,
+    themeMode,
+    setThemeMode,
     notificationsEnabled,
     setNotificationsEnabled,
   } = useSettingsStore();
@@ -56,7 +61,10 @@ export default function SettingsScreen() {
       const updated = await authService.updateAvatar(result.assets[0].uri);
       await setUser(updated);
     } catch (error: any) {
-      Alert.alert(t('common.error'), error.response?.data?.error || t('common.error'));
+      Alert.alert(
+        t('common.error'),
+        getApiErrorMessage(error, t, 'common.somethingWrong'),
+      );
     } finally {
       setUploadingAvatar(false);
     }
@@ -75,7 +83,10 @@ export default function SettingsScreen() {
       await setUser(updated);
       Alert.alert(t('settings.saved'));
     } catch (error: any) {
-      Alert.alert(t('common.error'), error.response?.data?.error || t('common.error'));
+      Alert.alert(
+        t('common.error'),
+        getApiErrorMessage(error, t, 'common.somethingWrong'),
+      );
     } finally {
       setSavingAge(false);
     }
@@ -96,6 +107,10 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleThemeChange = (enabled: boolean) => {
+    void setThemeMode(enabled ? 'dark' : 'light');
+  };
+
   const handleDeleteAccount = () => {
     Alert.alert(t('settings.deleteConfirmTitle'), t('settings.deleteConfirmBody'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -110,7 +125,7 @@ export default function SettingsScreen() {
           } catch (error: any) {
             Alert.alert(
               t('common.error'),
-              error.response?.data?.error || t('settings.deleteFailed'),
+              getApiErrorMessage(error, t, 'settings.deleteFailed'),
             );
           }
         },
@@ -177,15 +192,18 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <TouchableOpacity style={styles.settingRow} onPress={toggleLanguage}>
+      <View style={styles.settingRow}>
         <View style={styles.settingText}>
-          <Text style={styles.settingTitle}>{t('common.language')}</Text>
-          <Text style={styles.settingSubtitle}>
-            {language === 'en' ? t('common.english') : t('common.ukrainian')}
-          </Text>
+          <Text style={styles.settingTitle}>{t('settings.darkTheme')}</Text>
+          <Text style={styles.settingSubtitle}>{t('settings.darkThemeSubtitle')}</Text>
         </View>
-        <Text style={styles.chevron}>›</Text>
-      </TouchableOpacity>
+        <Switch
+          value={themeMode === 'dark'}
+          onValueChange={handleThemeChange}
+          trackColor={{ false: colors.border, true: colors.primaryLight }}
+          thumbColor={themeMode === 'dark' ? colors.primary : colors.textMuted}
+        />
+      </View>
 
       <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
         <Text style={styles.deleteButtonText}>{t('settings.deleteAccount')}</Text>
@@ -194,7 +212,10 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => {
+  const { colors } = theme;
+
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md },
   sectionTitle: {
@@ -268,4 +289,5 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: { ...typography.bodyBold, color: colors.danger },
   disabled: { opacity: 0.6 },
-});
+  });
+};

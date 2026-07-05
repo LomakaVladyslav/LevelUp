@@ -4,12 +4,16 @@ import {
   PlannedActivity,
   PlannedActivityInput,
   PlannedActivityUpdateInput,
+  TodayProgress,
 } from '../types';
 
 export const plannedActivityService = {
   getAll: async () => {
     const { data } = await api.get('/planned-activities');
-    return data as { plannedActivities: PlannedActivity[] };
+    return data as {
+      plannedActivities: PlannedActivity[];
+      todayProgress: TodayProgress;
+    };
   },
 
   create: async (input: PlannedActivityInput) => {
