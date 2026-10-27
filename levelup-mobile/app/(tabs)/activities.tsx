@@ -347,7 +347,7 @@ export default function ActivitiesScreen() {
       return;
     }
 
-    console.error(error);
+    console.error('Could not update activity reminder');
   };
 
   const handleSave = async () => {

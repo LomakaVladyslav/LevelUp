@@ -438,7 +438,7 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
     });
 
     if (!user) {
-      res.status(404).json({ error: 'User not found' });
+      res.status(401).json({ error: 'Session is no longer valid', errorCode: 'AUTH_SESSION_EXPIRED' });
       return;
     }
 

@@ -55,8 +55,8 @@ function createSettingsStore() {
           ...(revision === notificationRevision ? { notificationsEnabled: storedNotificationsEnabled === 'true' } : {}),
           settingsLoaded: true,
         });
-      } catch (error) {
-        console.error('Failed to load settings:', error);
+      } catch {
+        console.error('Failed to load settings');
         set({ settingsLoaded: true });
       }
     },
@@ -87,7 +87,7 @@ function createSettingsStore() {
       const results = await Promise.allSettled(reminderUpdates);
       for (const result of results) {
         if (result.status === 'rejected') {
-          console.error('Failed to update reminders after language change:', result.reason);
+          console.error('Failed to update reminders after language change');
         }
       }
     },

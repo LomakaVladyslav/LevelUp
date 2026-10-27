@@ -284,7 +284,7 @@ export const getPlannedActivities = async (
       ),
     });
   } catch (error) {
-    console.error('Get planned activities error:', error);
+    console.error('Get planned activities failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 };

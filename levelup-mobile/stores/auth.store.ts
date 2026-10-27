@@ -111,11 +111,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     try {
       const session = await serialize(async () => {
         // Resume interrupted deletion before any account or personal screen is restored.
+        const restored = await sessionStorage.read();
         for (const owner of await userData.pendingDeletions()) {
           await userData.purge(owner);
           await sessionStorage.clearOwner(owner);
-          await notificationService.cancelAllReminders();
-          await useSettingsStore.getState().resetNotifications();
+          if (!restored || restored.user.id === owner) {
+            await notificationService.cancelAllReminders();
+            await useSettingsStore.getState().resetNotifications();
+          }
           await userData.finishDeletion(owner);
         }
         return sessionStorage.read();

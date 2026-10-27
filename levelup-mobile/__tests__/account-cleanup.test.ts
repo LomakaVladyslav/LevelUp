@@ -106,3 +106,15 @@ test('failed local purge is retried at startup before restoring a session', asyn
   expect(await userData.pendingDeletions()).not.toContain(owner);
   expect(useAuthStore.getState().user).toBeNull();
 });
+
+test('partial secure deletion keeps owner evidence until the retry removes all credentials', async () => {
+  const owner = 'delete-secure-retry';
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await SecureStore.setItemAsync('levelup.session.token', 'legacy-token');
+  jest.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('secure storage unavailable'));
+  await expect(useAuthStore.getState().deleteAccount()).rejects.toThrow('LOCAL_CLEANUP_PENDING');
+  expect(await SecureStore.getItemAsync('levelup.session')).toContain(owner);
+  await useAuthStore.getState().loadFromStorage();
+  expect(await SecureStore.getItemAsync('levelup.session')).toBeNull();
+  expect(await SecureStore.getItemAsync('levelup.session.token')).toBeNull();
+});

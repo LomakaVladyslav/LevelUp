@@ -429,18 +429,13 @@ test('empty history leads to tasks instead of a dead end', async () => {
   expect(useRouter().navigate).toHaveBeenCalledWith('/(tabs)/activities');
 });
 
-test('age save is serialized, keeps newly earned XP, and confirms inline', async () => {
-  let resolve!: (value: NonNullable<ReturnType<typeof useAuthStore.getState>['user']>) => void;
-  jest.mocked(authService.updateMe).mockReturnValue(new Promise((done) => { resolve = done; }));
+test('settings does not collect age and preserves historical profile values', async () => {
+  const previous = useAuthStore.getState().user!;
+  useAuthStore.setState({ user: { ...previous, age: 25 } });
   await render(<SettingsScreen />);
-  await fireEvent.changeText(screen.getByLabelText('Age'), '25');
-  await fireEvent.press(screen.getByText('Save'));
-  await fireEvent.press(screen.getByText('Save'));
-  expect(authService.updateMe).toHaveBeenCalledTimes(1);
-  const user = useAuthStore.getState().user!;
-  await act(async () => { await useAuthStore.getState().setUser({ ...user, xp: 240, level: 3 }); resolve({ ...user, age: 25 }); });
-  expect(useAuthStore.getState().user).toMatchObject({ xp: 240, age: 25, level: 3 });
-  expect(screen.getByText('Settings saved')).toBeTruthy();
+  expect(screen.queryByLabelText('Age')).toBeNull();
+  expect(authService.updateMe).not.toHaveBeenCalled();
+  expect(useAuthStore.getState().user?.age).toBe(25);
 });
 
 test('an account deletion confirmation cannot act on a different session', async () => {

@@ -1,3 +1,4 @@
+import { apiContext } from './api-context';
 import { prepareAvatar } from './avatar';
 import api from './api';
 import { User } from '../types';
@@ -70,21 +71,28 @@ export const authService = {
   },
 
   updateMe: async (updates: { age?: number | null }) => {
-    const { data } = await api.patch('/auth/me', updates);
+    const context = apiContext.get();
+    if (!context.token) throw new Error('Session changed');
+    const { data } = await api.patch('/auth/me', updates, { headers: { Authorization: `Bearer ${context.token}` } });
     return data.user as User;
   },
 
   updateAvatar: async (avatarUri: string) => {
+    const context = apiContext.get();
+    if (!context.token) throw new Error('Session changed');
     const formData = new FormData();
     if (avatarUri) appendAvatar(formData, await prepareAvatar(avatarUri));
 
+    if (context.sessionVersion !== apiContext.get().sessionVersion) throw new Error('Session changed');
     const { data } = await api.post('/auth/me/avatar', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${context.token}` },
     });
     return data.user as User;
   },
 
   deleteMe: async () => {
-    await api.delete('/auth/me');
+    const context = apiContext.get();
+    if (!context.token) throw new Error('Session changed');
+    await api.delete('/auth/me', { headers: { Authorization: `Bearer ${context.token}` } });
   },
 };

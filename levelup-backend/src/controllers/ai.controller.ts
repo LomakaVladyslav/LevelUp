@@ -255,7 +255,7 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
       },
     });
   } catch (error) {
-    console.error('AI chat error:', error);
+    console.error('AI chat failed');
     res.status(500).json({
       error: 'AI chat failed',
       errorCode: 'AI_CHAT_FAILED',

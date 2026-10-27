@@ -388,7 +388,7 @@ export const localizeActivities = async <
         ),
       );
     },
-    onError: (error) => console.error('Activity translation failed:', error),
+    onError: () => console.error('Activity translation failed'),
   });
 
 export const localizePlannedActivities = async <
@@ -428,6 +428,6 @@ export const localizePlannedActivities = async <
         ),
       );
     },
-    onError: (error) =>
-      console.error('Planned activity translation failed:', error),
+    onError: () =>
+      console.error('Planned activity translation failed'),
   });

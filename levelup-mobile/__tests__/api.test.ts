@@ -92,3 +92,17 @@ test('simultaneous task reads share a request but writes and account changes inv
     expect(read).toHaveBeenCalledTimes(4);
   } finally { read.mockRestore(); }
 });
+
+test('503 retains the session while 401 expires only its initiating bearer token', async () => {
+  const expired = jest.fn();
+  apiContext.onSessionExpired(expired);
+  apiContext.setToken('valid-token', 'owner');
+  const originalAdapter = api.defaults.adapter;
+  try {
+    for (const status of [503, 401]) {
+      api.defaults.adapter = async (config) => { throw { config, response: { status } }; };
+      await expect(api.delete('/auth/me')).rejects.toMatchObject({ response: { status } });
+      expect(expired).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+    }
+  } finally { api.defaults.adapter = originalAdapter; }
+});

@@ -24,7 +24,7 @@ export const requestMetrics = (
     const metric = {
       type: 'request',
       method: req.method,
-      path: req.originalUrl.split('?')[0],
+      path: typeof req.route?.path === 'string' ? req.route.path : 'unmatched',
       status: res.statusCode,
       durationMs: Number(durationMs.toFixed(1)),
       monitored: isMonitoredRoute(req.path),

@@ -33,25 +33,13 @@ export const ASSET_BASE_URL = API_BASE_URL.replace(/\/api$/, "");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 
-const getRequestDisplayUrl = (baseURL?: string, url?: string) => {
-  if (!url) return baseURL || API_BASE_URL;
-  if (/^https?:\/\//i.test(url)) return url;
-
-  const resolvedBaseUrl = (baseURL || API_BASE_URL).replace(/\/+$/, "");
-  const resolvedPath = url.startsWith("/") ? url : `/${url}`;
-  return `${resolvedBaseUrl}${resolvedPath}`;
-};
-
 const logApiError = (error: unknown) => {
   if (!isDevelopment || !axios.isAxiosError(error)) return;
 
   const config = error.config;
   console.warn("[api] request failed", {
     method: config?.method?.toUpperCase() ?? "GET",
-    url: getRequestDisplayUrl(config?.baseURL, config?.url),
-    baseURL: config?.baseURL ?? API_BASE_URL,
     status: error.response?.status ?? null,
-    message: error.message,
 
   });
 };

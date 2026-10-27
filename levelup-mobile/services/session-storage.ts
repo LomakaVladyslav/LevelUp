@@ -43,8 +43,11 @@ export const sessionStorage = {
   clearOwner: async (owner: string) => {
     const stored = await SecureStore.getItemAsync(SESSION_KEY);
     if (stored && JSON.parse(stored)?.user?.id === owner) {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
+      // Keep ownership evidence until every legacy credential has been removed,
+      // so a partial storage failure can be retried safely on the next launch.
       await SecureStore.deleteItemAsync(LEGACY_SECURE_TOKEN_KEY);
+      await AsyncStorage.multiRemove(['token', 'user']);
+      await SecureStore.deleteItemAsync(SESSION_KEY);
     }
     const legacy = await AsyncStorage.getItem('user');
     if (legacy && JSON.parse(legacy)?.id === owner) {

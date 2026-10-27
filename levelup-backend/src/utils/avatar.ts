@@ -19,7 +19,7 @@ export const deleteAvatarFile = (avatarUrl?: string | null): void => {
 
   fs.unlink(filePath, (error) => {
     if (error && error.code !== 'ENOENT') {
-      console.error('Failed to delete avatar file:', error);
+      console.error('Failed to delete avatar file');
     }
   });
 };

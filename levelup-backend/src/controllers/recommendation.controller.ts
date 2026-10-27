@@ -10,7 +10,7 @@ export const getRecommendations = async (
     const recommendations = await generateRecommendations(req.user.id, new Date(), getRequestTimezone(req));
     res.json({ recommendations });
   } catch (error) {
-    console.error('Get recommendations error:', error);
+    console.error('Get recommendations failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 };

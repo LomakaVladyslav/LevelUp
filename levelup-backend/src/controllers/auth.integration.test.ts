@@ -186,6 +186,7 @@ test('reset password updates password and consumes active reset tokens', async (
   stubMethod(prisma as unknown as Record<string, unknown>, '$queryRaw', async () => [{ id: user.id }]);
   let updatedHash = '';
   let consumedTokens = false;
+  let revoked = false;
 
   stubMethod(
     prisma.passwordResetToken as unknown as Record<string, unknown>,
@@ -198,7 +199,8 @@ test('reset password updates password and consumes active reset tokens', async (
   stubMethod(
     prisma.user as unknown as Record<string, unknown>,
     'update',
-    async ({ data }: { data: { passwordHash: string } }) => {
+    async ({ data }: { data: { passwordHash: string; sessionVersion: { increment: number } } }) => {
+      revoked = data.sessionVersion.increment === 1;
       updatedHash = data.passwordHash;
       return { ...user, passwordHash: data.passwordHash };
     },
@@ -219,4 +221,5 @@ test('reset password updates password and consumes active reset tokens', async (
   assert.equal(response.status, 200);
   assert.equal(await bcrypt.compare('secret1', updatedHash), true);
   assert.equal(consumedTokens, true);
+  assert.equal(revoked, true);
 });

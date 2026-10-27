@@ -1,3 +1,13 @@
+## Stage 1 update — 2026-10-27
+
+Baseline is `08769dd` on `upgrade/expo-sdk-54`; previous stabilization was preserved and pushed. Stage 1 implements AI privacy gates, dependency fixes, owner-only avatars, deletion cleanup with race protection, age UX removal and auth/logging safeguards. See [qa/STAGE1_SECURITY.md](qa/STAGE1_SECURITY.md) for controls, validation, residual advisories and environment limitations. No Stage 2 product work or production migration was performed.
+
+Current validation: backend 55 tests, mobile 76 tests; lint and TypeScript pass; Expo Doctor 18/18; Android/iOS Hermes export smoke check. Backend audit 0, mobile audit 4 package findings representing 2 underlying issues. PostgreSQL 23-test suite and native builds have not been rerun in this session. The older build/database results below are historical, not evidence for this revision.
+
+Next: restore an isolated test PostgreSQL environment and run `test:db`; resolve tracked Router/Metro advisory compatibility before public release. Then implement the separately approved Stage 2 scope. Keep release/device QA gates open.
+
+---
+
 # LevelUp — current work status
 
 All stabilization and product changes are uncommitted. Existing user edits were

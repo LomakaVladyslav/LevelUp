@@ -8,7 +8,7 @@ process.env.JWT_SECRET = 'test-secret';
 process.env.OPENAI_API_KEY = 'test-key-must-never-be-used';
 const app = require('../index').default;
 const prisma = require('../utils/prisma').default;
-const { localizeActivities, localizePlannedActivities } = require('../services/content-translation.service');
+const { localizeActivities, localizePlannedActivities, sourceTextHash } = require('../services/content-translation.service');
 
 test('direct authenticated AI API is disabled before reading personal data or calling a provider', async () => {
   const original = prisma.user.findUnique;
@@ -31,7 +31,7 @@ test('all locales return original personal text even with configured provider an
   let calls = 0;
   globalThis.fetch = async () => { calls++; throw new Error('Provider transmission forbidden'); };
   try {
-    const records = [{ id: '1', title: 'Приватна задача', description: 'Оригінал', motivationText: 'Моя мета', translations: [] }];
+    const records = [{ id: '1', title: 'Приватна задача', description: 'Оригінал', motivationText: 'Моя мета', translations: [{ locale: 'de', title: 'Cached AI text', description: 'Cached', motivationText: 'Cached', sourceHash: sourceTextHash('Приватна задача', 'Оригінал', 'Моя мета') }] }];
     for (const locale of ['uk', 'de', 'en', 'ja']) {
       for (const localize of [localizeActivities, localizePlannedActivities]) {
         const [result] = await localize(records, locale);
