@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { getAssetUrl } from '../services/api';
+import { privateAvatarSource } from '../services/avatar';
+import { useAuthStore } from '../stores/auth.store';
 import { useTheme } from '../hooks/useTheme';
 
 interface UserAvatarProps {
@@ -11,15 +12,17 @@ interface UserAvatarProps {
 
 export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) {
   const { colors } = useTheme();
-  const source = getAssetUrl(avatarUrl);
+  const token = useAuthStore((state) => state.token);
+  const source = privateAvatarSource(avatarUrl, token);
   const radius = size / 2;
   const [failedSource, setFailedSource] = useState<string | null>(null);
 
-  if (source && source !== failedSource) {
+  if (source && source.uri !== failedSource) {
     return (
       <Image
-        source={{ uri: source }}
-        onError={() => setFailedSource(source)}
+        testID="user-avatar"
+        source={source}
+        onError={() => setFailedSource(source.uri)}
         style={[
           styles.avatar,
           {

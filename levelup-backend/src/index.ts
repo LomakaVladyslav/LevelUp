@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express, { ErrorRequestHandler } from 'express';
 import prisma from './utils/prisma';
 import cors from 'cors';
-import path from 'path';
 
 import authRoutes from './routes/auth.routes';
 import activityRoutes from './routes/activity.routes';
@@ -12,7 +11,8 @@ import goalRoutes from './routes/goal.routes';
 import aiRoutes from './routes/ai.routes';
 import plannedActivityRoutes from './routes/planned-activity.routes';
 import recommendationRoutes from './routes/recommendation.routes';
-import { uploadsRoot } from './utils/avatar';
+import { authenticate } from './middleware/auth.middleware';
+import { getAvatar, getLegacyAvatar } from './controllers/avatar.controller';
 import { requestMetrics } from './middleware/request-metrics.middleware';
 
 const app = express();
@@ -39,7 +39,7 @@ const createPasswordResetAppUrl = (token: string): string => {
 app.use(cors());                    // Allow requests from the mobile app
 app.use(express.json({ limit: '64kb' }));            // Parse JSON request bodies
 app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
-app.use('/uploads', express.static(path.resolve(uploadsRoot)));
+app.get('/uploads/avatars/:filename', authenticate, getLegacyAvatar);
 app.use(requestMetrics);
 
 // Health check — useful for deployment monitoring
@@ -50,14 +50,7 @@ app.get('/health', async (_req, res) => {
   } catch { res.status(503).json({ status: 'unavailable' }); }
 });
 
-app.get('/api/avatars/:id', async (req, res) => {
-  try {
-    const avatar = await prisma.avatar.findUnique({ where: { id: req.params.id } });
-    if (!avatar) { res.sendStatus(404); return; }
-    res.set('Cache-Control', 'private, max-age=86400');
-    res.type(avatar.contentType).send(Buffer.from(avatar.data));
-  } catch { res.status(503).json({ error: 'Image temporarily unavailable' }); }
-});
+app.get('/api/avatars/:id', authenticate, getAvatar);
 
 app.get('/reset-password', (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
