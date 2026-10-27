@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react-native';
+import { act, render } from '@testing-library/react-native';
 import { privateAvatarSource } from '../services/avatar';
 import { ASSET_BASE_URL } from '../services/api';
 import { UserAvatar } from '../components/UserAvatar';
@@ -16,7 +16,7 @@ test('avatar component sends authorization and removes the image on logout', asy
   useAuthStore.setState({ token: 'secret' });
   const view = await render(<UserAvatar username="Owner" avatarUrl="/uploads/avatars/own.jpg" />);
   expect(view.getByTestId('user-avatar').props.source.headers.Authorization).toBe('Bearer secret');
-  useAuthStore.setState({ token: null });
+  await act(async () => { useAuthStore.setState({ token: null }); });
   await view.rerender(<UserAvatar username="Owner" avatarUrl="/uploads/avatars/own.jpg" />);
   expect(view.queryByText('O')).not.toBeNull();
 });

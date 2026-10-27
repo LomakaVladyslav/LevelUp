@@ -209,6 +209,7 @@ export const ja: TranslationDictionary = {
   'settings.deleteAccount': 'アカウントを削除',
   'settings.deleteConfirmTitle': 'アカウントを削除',
   'settings.deleteConfirmBody': 'アカウントとLevelUpのすべてのデータが完全に削除されます。',
+  'settings.localCleanupPending': "アカウントは削除されました。一部のローカルデータを削除できませんでした。LevelUpを再起動して再試行してください。",
   'settings.deleteFailed': 'アカウントを削除できませんでした',
   'notifications.title': 'LevelUpリマインダー',
   'notifications.body': '今日は数分使ってタスクを1つ完了しましょう。',

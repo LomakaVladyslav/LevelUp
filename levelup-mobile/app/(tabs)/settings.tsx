@@ -20,7 +20,7 @@ export default function SettingsScreen() {
   const { colors } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
   const headerHeight = useHeaderHeight();
-  const { user, setUser, logout } = useAuthStore();
+  const { user, setUser, deleteAccount } = useAuthStore();
   const { themeMode, setThemeMode, notificationsEnabled, setNotificationsEnabled } = useSettingsStore();
   const [age, setAge] = useState(user?.age ? String(user.age) : '');
   const pending = useRef(false);
@@ -82,7 +82,13 @@ export default function SettingsScreen() {
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.delete'), style: 'destructive', onPress: () => {
         if (session !== apiContext.get().sessionVersion || !mounted.current) return;
-        void runProfileChange('delete', async (isCurrent) => { await authService.deleteMe(); if (isCurrent()) await logout(); });
+        void runProfileChange('delete', async () => {
+          try { await deleteAccount(); }
+          catch (error) {
+            if (error instanceof Error && error.message === 'LOCAL_CLEANUP_PENDING') Alert.alert(t('common.error'), t('settings.localCleanupPending'));
+            else throw error;
+          }
+        });
       } },
     ]);
   };

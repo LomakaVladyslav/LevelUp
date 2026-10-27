@@ -209,6 +209,7 @@ export const ptBR: TranslationDictionary = {
   'settings.deleteAccount': 'Excluir conta',
   'settings.deleteConfirmTitle': 'Excluir conta',
   'settings.deleteConfirmBody': 'Isso excluirá permanentemente sua conta e todos os dados do LevelUp.',
+  'settings.localCleanupPending': "Sua conta foi excluída. Alguns dados locais não puderam ser apagados. Reinicie o LevelUp para tentar novamente.",
   'settings.deleteFailed': 'Não foi possível excluir a conta',
   'notifications.title': 'Lembrete do LevelUp',
   'notifications.body': 'Reserve alguns minutos para concluir uma tarefa hoje.',

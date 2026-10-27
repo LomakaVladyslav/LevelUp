@@ -40,6 +40,18 @@ export const sessionStorage = {
       AsyncStorage.multiRemove(['token', 'user']),
     ]);
   },
+  clearOwner: async (owner: string) => {
+    const stored = await SecureStore.getItemAsync(SESSION_KEY);
+    if (stored && JSON.parse(stored)?.user?.id === owner) {
+      await SecureStore.deleteItemAsync(SESSION_KEY);
+      await SecureStore.deleteItemAsync(LEGACY_SECURE_TOKEN_KEY);
+    }
+    const legacy = await AsyncStorage.getItem('user');
+    if (legacy && JSON.parse(legacy)?.id === owner) {
+      await SecureStore.deleteItemAsync(LEGACY_SECURE_TOKEN_KEY);
+      await AsyncStorage.multiRemove(['token', 'user']);
+    }
+  },
   clear: async () => {
     const results = await Promise.allSettled([
       AsyncStorage.setItem(LOGGED_OUT_KEY, 'true'),

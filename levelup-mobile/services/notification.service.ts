@@ -147,6 +147,7 @@ export const notificationService = {
   reconcileReminders: (activities: PlannedActivity[], language: Language, dailyEnabled: boolean) => sessionWork(() => reconcileReminders(activities, language, dailyEnabled)),
   cancelAllReminders: () => queued(async () => {
     await Notifications.cancelAllScheduledNotificationsAsync();
+    await Notifications.dismissAllNotificationsAsync();
     const keys = await AsyncStorage.getAllKeys();
     await AsyncStorage.multiRemove(keys.filter((key) => key === LEGACY_DAILY_KEY || key.startsWith(LEGACY_ACTIVITY_PREFIX)));
   }),

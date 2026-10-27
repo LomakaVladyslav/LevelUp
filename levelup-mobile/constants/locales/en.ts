@@ -207,6 +207,7 @@ export const en = {
   'settings.deleteAccount': 'Delete account',
   'settings.deleteConfirmTitle': 'Delete account',
   'settings.deleteConfirmBody': 'This permanently removes your account and all LevelUp data.',
+  'settings.localCleanupPending': "Your account was deleted. Some local data could not be cleared. Restart LevelUp to retry cleanup.",
   'settings.deleteFailed': 'Failed to delete account',
   'notifications.title': 'LevelUp reminder',
   'notifications.body': 'Take a few minutes to complete a task today.',

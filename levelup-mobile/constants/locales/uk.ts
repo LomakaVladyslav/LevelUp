@@ -209,6 +209,7 @@ export const uk: TranslationDictionary = {
   'settings.deleteAccount': 'Видалити акаунт',
   'settings.deleteConfirmTitle': 'Видалити акаунт',
   'settings.deleteConfirmBody': 'Це назавжди видалить акаунт і всі дані LevelUp.',
+  'settings.localCleanupPending': "Акаунт видалено. Частину локальних даних не вдалося очистити. Перезапустіть LevelUp, щоб повторити очищення.",
   'settings.deleteFailed': 'Не вдалося видалити акаунт',
   'notifications.title': 'Нагадування LevelUp',
   'notifications.body': 'Знайди кілька хвилин, щоб виконати завдання сьогодні.',

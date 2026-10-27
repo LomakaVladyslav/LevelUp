@@ -1,3 +1,5 @@
+import { userData } from '../services/user-data';
+import { useSettingsStore } from './settings.store';
 import { create } from 'zustand';
 import { authService } from '../services/auth.service';
 import { sessionStorage } from '../services/session-storage';
@@ -13,6 +15,7 @@ interface AuthStore {
   setUser: (user: User) => Promise<void>;
   refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   loadFromStorage: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
 }
@@ -29,6 +32,7 @@ const reportStorageError = () => console.warn('Could not update the local sessio
 export const useAuthStore = create<AuthStore>((set, get) => ({
   token: null, user: null, isLoading: true,
   setAuth: async (token, user) => {
+    const previousOwner = get().user?.id;
     const version = ++generation;
     ++userRevision;
     await serialize(async () => {
@@ -36,6 +40,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       await sessionStorage.write(token, user);
     });
     if (version !== generation) return;
+    if (previousOwner && previousOwner !== user.id) {
+      apiContext.setToken(null);
+      set({ token: null, user: null, isLoading: false });
+      await Promise.all([notificationService.cancelAllReminders(), useSettingsStore.getState().resetNotifications()]);
+      if (version !== generation) return;
+    }
     apiContext.setToken(token, user.id);
     set({ token, user, isLoading: false });
   },
@@ -68,14 +78,48 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     await Promise.allSettled([
       serialize(() => sessionStorage.clear()),
       notificationService.cancelAllReminders(),
+      useSettingsStore.getState().resetNotifications(),
     ]).then((results) => {
       if (results.some((result) => result.status === 'rejected')) reportStorageError();
     });
   },
+  deleteAccount: async () => {
+    const owner = get().user?.id;
+    if (!owner || !get().token) return;
+    const session = apiContext.get().sessionVersion;
+    await authService.deleteMe();
+    const marked = userData.beginDeletion(owner);
+    const active = session === apiContext.get().sessionVersion;
+    if (active) {
+      ++generation;
+      ++userRevision;
+      apiContext.setToken(null);
+      set({ token: null, user: null, isLoading: false });
+    }
+    // Enqueue device cleanup immediately so a subsequent login queues after it.
+    const deviceCleanup = active ? Promise.all([
+      notificationService.cancelAllReminders(),
+      useSettingsStore.getState().resetNotifications(),
+    ]) : Promise.resolve();
+    const sessionCleanup = serialize(() => sessionStorage.clearOwner(owner));
+    const results = await Promise.allSettled([marked, userData.purge(owner), deviceCleanup, sessionCleanup]);
+    if (results.some(result => result.status === 'rejected')) throw new Error('LOCAL_CLEANUP_PENDING');
+    await userData.finishDeletion(owner).catch(() => { throw new Error('LOCAL_CLEANUP_PENDING'); });
+  },
   loadFromStorage: async () => {
     const version = generation;
     try {
-      const session = await serialize(() => sessionStorage.read());
+      const session = await serialize(async () => {
+        // Resume interrupted deletion before any account or personal screen is restored.
+        for (const owner of await userData.pendingDeletions()) {
+          await userData.purge(owner);
+          await sessionStorage.clearOwner(owner);
+          await notificationService.cancelAllReminders();
+          await useSettingsStore.getState().resetNotifications();
+          await userData.finishDeletion(owner);
+        }
+        return sessionStorage.read();
+      });
       if (version !== generation) return;
       if (session) {
         apiContext.setToken(session.token, session.user.id);

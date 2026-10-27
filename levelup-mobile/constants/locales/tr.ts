@@ -209,6 +209,7 @@ export const tr: TranslationDictionary = {
   'settings.deleteAccount': 'Hesabı sil',
   'settings.deleteConfirmTitle': 'Hesabı sil',
   'settings.deleteConfirmBody': 'Bu işlem hesabını ve tüm LevelUp verilerini kalıcı olarak siler.',
+  'settings.localCleanupPending': "Hesabınız silindi. Bazı yerel veriler temizlenemedi. Temizlemeyi yeniden denemek için LevelUp uygulamasını yeniden başlatın.",
   'settings.deleteFailed': 'Hesap silinemedi',
   'notifications.title': 'LevelUp hatırlatıcısı',
   'notifications.body': 'Bugün bir görevi tamamlamak için birkaç dakika ayır.',

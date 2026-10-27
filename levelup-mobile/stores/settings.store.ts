@@ -14,12 +14,21 @@ interface SettingsStore {
   loadFromStorage: () => Promise<void>;
   setLanguage: (language: Language) => Promise<void>;
   setThemeMode: (themeMode: ThemeMode) => Promise<void>;
+  resetNotifications: () => Promise<void>;
   setNotificationsEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const LANGUAGE_KEY = 'language';
 const THEME_MODE_KEY = 'themeMode';
 const NOTIFICATIONS_ENABLED_KEY = 'notificationsEnabled';
+
+let notificationRevision = 0;
+let notificationWrites: Promise<unknown> = Promise.resolve();
+const persistNotification = (action: () => Promise<void>) => {
+  const next = notificationWrites.then(action, action);
+  notificationWrites = next.catch(() => undefined);
+  return next;
+};
 
 export const useSettingsStore = createSettingsStore();
 
@@ -31,6 +40,7 @@ function createSettingsStore() {
     notificationsEnabled: false,
 
     loadFromStorage: async () => {
+      const revision = notificationRevision;
       try {
         const [storedLanguage, storedThemeMode, storedNotificationsEnabled] = await Promise.all([
           AsyncStorage.getItem(LANGUAGE_KEY),
@@ -42,7 +52,7 @@ function createSettingsStore() {
         set({
           language: isLanguage(storedLanguage) ? storedLanguage : 'en',
           themeMode: isThemeMode(storedThemeMode) ? storedThemeMode : 'light',
-          notificationsEnabled: storedNotificationsEnabled === 'true',
+          ...(revision === notificationRevision ? { notificationsEnabled: storedNotificationsEnabled === 'true' } : {}),
           settingsLoaded: true,
         });
       } catch (error) {
@@ -87,20 +97,28 @@ function createSettingsStore() {
       set({ themeMode });
     },
 
+    resetNotifications: async () => {
+      ++notificationRevision;
+      set({ notificationsEnabled: false });
+      await persistNotification(() => AsyncStorage.removeItem(NOTIFICATIONS_ENABLED_KEY));
+    },
     setNotificationsEnabled: async (enabled) => {
+      const revision = ++notificationRevision;
+      const session = apiContext.get().sessionVersion;
+      const isCurrent = () => revision === notificationRevision && session === apiContext.get().sessionVersion;
       if (enabled) {
         const granted = await notificationService.requestPermission();
-        if (!granted) {
-          throw new Error('notifications.permissionDenied');
-        }
-
+        if (!isCurrent()) return;
+        if (!granted) throw new Error('notifications.permissionDenied');
         await notificationService.scheduleDailyReminder(get().language);
       } else {
         await notificationService.cancelDailyReminder();
       }
-
-      await AsyncStorage.setItem(NOTIFICATIONS_ENABLED_KEY, String(enabled));
-      set({ notificationsEnabled: enabled });
+      await persistNotification(async () => {
+        if (!isCurrent()) return;
+        await AsyncStorage.setItem(NOTIFICATIONS_ENABLED_KEY, String(enabled));
+        if (isCurrent()) set({ notificationsEnabled: enabled });
+      });
     },
   }));
 }

@@ -3,7 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completePlannedActivity } from '../../services/complete-planned-activity';
 import { orderTasks } from '../../utils/task-order';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { userData } from '../../services/user-data';
 import { useScreenResource } from '../../hooks/useScreenResource';
 import { ResourceError } from '../../components/ResourceError';
 import { apiContext } from '../../services/api-context';
@@ -158,8 +158,7 @@ export default function ActivitiesScreen() {
   const submittingRef = useRef(false);
   const mutationRef = useRef(false);
   const userId = useAuthStore((state) => state.user?.id);
-  const draftKey = `activityDraft:${userId}`;
-  const draftQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const formOwner = useRef(userId);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingActivity, setEditingActivity] = useState<PlannedActivity | null>(null);
   const [selectedType, setSelectedType] = useState<ActivityType>('STUDY');
@@ -231,11 +230,11 @@ export default function ActivitiesScreen() {
   };
 
   useEffect(() => {
-    if (!modalVisible || editingActivity || !userId || submitting) return;
+    if (!modalVisible || editingActivity || !userId || submitting || formOwner.current !== userId) return;
     const draft = { title, description, selectedType, scheduleType, dueDate: dueDate?.toISOString(), dueTime: dueTime?.toISOString() };
     // Queue every draft snapshot immediately; closing or backgrounding cannot cancel the latest text.
-    draftQueue.current = draftQueue.current.then(() => AsyncStorage.setItem(draftKey, JSON.stringify(draft))).catch(() => undefined);
-  }, [modalVisible, editingActivity, userId, submitting, title, description, selectedType, scheduleType, dueDate, dueTime, draftKey]);
+    void userData.saveDraft(userId, JSON.stringify(draft)).catch(() => undefined);
+  }, [modalVisible, editingActivity, userId, submitting, title, description, selectedType, scheduleType, dueDate, dueTime]);
 
   const resetForm = useCallback((activity?: PlannedActivity) => {
     setEditingActivity(activity ?? null);
@@ -248,6 +247,15 @@ export default function ActivitiesScreen() {
     setPickerMode(null);
   }, []);
 
+  useEffect(() => {
+    if (formOwner.current === userId) return;
+    formOwner.current = userId;
+    resetForm();
+    setModalVisible(false);
+    setMenuActivity(null);
+    setCompletionCelebration(null);
+  }, [userId, resetForm]);
+
   const closeActionsMenu = () => {
     setMenuActivity(null);
     setMenuPosition(null);
@@ -257,8 +265,7 @@ export default function ActivitiesScreen() {
     resetForm();
     const session = apiContext.get().sessionVersion;
     try {
-      await draftQueue.current;
-      const value = await AsyncStorage.getItem(draftKey);
+      const value = userId ? await userData.readDraft(userId) : null;
       const draft = value ? JSON.parse(value) : null;
       if (session !== apiContext.get().sessionVersion) return;
       if (draft && typeof draft.title === 'string' && typeof draft.description === 'string') {
@@ -270,7 +277,7 @@ export default function ActivitiesScreen() {
       }
     } catch { /* A corrupt draft must not block creating an activity. */ }
     if (session === apiContext.get().sessionVersion) setModalVisible(true);
-  }, [draftKey, resetForm]);
+  }, [userId, resetForm]);
 
   useEffect(() => {
     if (create !== '1') { consumedCreate.current = false; return; }
@@ -382,7 +389,7 @@ export default function ActivitiesScreen() {
       setModalVisible(false);
       if (!editingActivity) {
         setShowPaused(false);
-        draftQueue.current = draftQueue.current.then(() => AsyncStorage.removeItem(draftKey)).catch(() => undefined);
+        if (userId) void userData.removeDraft(userId).catch(() => undefined);
       }
       resetForm();
       void loadActivities();
@@ -775,7 +782,7 @@ export default function ActivitiesScreen() {
         </View>
       </Modal>
 
-      <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeForm}>
+      <Modal visible={modalVisible && formOwner.current === userId} animationType="slide" transparent onRequestClose={closeForm}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
           <View style={[styles.modalCard, { paddingBottom: Math.max(16, insets.bottom) }]}>
             <ScrollView keyboardShouldPersistTaps="handled" style={styles.formFields}>

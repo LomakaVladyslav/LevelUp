@@ -209,6 +209,7 @@ export const ko: TranslationDictionary = {
   'settings.deleteAccount': '계정 삭제',
   'settings.deleteConfirmTitle': '계정 삭제',
   'settings.deleteConfirmBody': '계정과 모든 LevelUp 데이터가 영구적으로 삭제됩니다.',
+  'settings.localCleanupPending': "계정이 삭제되었습니다. 일부 로컬 데이터를 지우지 못했습니다. LevelUp을 다시 시작하여 정리를 재시도하세요.",
   'settings.deleteFailed': '계정을 삭제하지 못했습니다',
   'notifications.title': 'LevelUp 알림',
   'notifications.body': '오늘 몇 분을 내어 작업 하나를 완료하세요.',

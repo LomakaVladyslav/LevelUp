@@ -209,6 +209,7 @@ export const id: TranslationDictionary = {
   'settings.deleteAccount': 'Hapus akun',
   'settings.deleteConfirmTitle': 'Hapus akun',
   'settings.deleteConfirmBody': 'Tindakan ini akan menghapus akun dan semua data LevelUp secara permanen.',
+  'settings.localCleanupPending': "Akun Anda telah dihapus. Sebagian data lokal belum dapat dihapus. Mulai ulang LevelUp untuk mencoba lagi.",
   'settings.deleteFailed': 'Gagal menghapus akun',
   'notifications.title': 'Pengingat LevelUp',
   'notifications.body': 'Luangkan beberapa menit untuk menyelesaikan tugas hari ini.',

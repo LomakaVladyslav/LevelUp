@@ -209,6 +209,7 @@ export const es: TranslationDictionary = {
   'settings.deleteAccount': 'Eliminar cuenta',
   'settings.deleteConfirmTitle': 'Eliminar cuenta',
   'settings.deleteConfirmBody': 'Esto eliminará para siempre tu cuenta y todos los datos de LevelUp.',
+  'settings.localCleanupPending': "Tu cuenta se ha eliminado. No se pudieron borrar algunos datos locales. Reinicia LevelUp para volver a intentarlo.",
   'settings.deleteFailed': 'No se pudo eliminar la cuenta',
   'notifications.title': 'Recordatorio de LevelUp',
   'notifications.body': 'Dedica unos minutos a completar una tarea hoy.',

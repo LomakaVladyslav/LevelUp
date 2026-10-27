@@ -1,0 +1,108 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import * as Notifications from 'expo-notifications';
+import { useAuthStore } from '../stores/auth.store';
+import { useSettingsStore } from '../stores/settings.store';
+import { userData } from '../services/user-data';
+import { authService } from '../services/auth.service';
+import { notificationService } from '../services/notification.service';
+jest.mock('../services/auth.service', () => ({ authService: { deleteMe: jest.fn() } }));
+const user = (id: string) => ({ id, username: 'Owner', email: 'owner@example.test', xp: 0, level: 1 });
+beforeEach(async () => {
+  await useAuthStore.getState().logout();
+  jest.mocked(authService.deleteMe).mockResolvedValue(undefined);
+});
+test('logout keeps drafts and retry keys; deletion clears only the deleted owner', async () => {
+  const owner = 'delete-success';
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await userData.saveDraft(owner, 'private draft');
+  await AsyncStorage.multiSet([['activityDraft:other', 'other draft'], ['mutation:unknown-owner-hash', 'retry-uuid'], ['language', 'uk']]);
+  await useAuthStore.getState().logout();
+  expect(await userData.readDraft(owner)).toBe('private draft');
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await AsyncStorage.multiSet([['dailyReminderNotificationId', 'old-daily'], ['plannedActivityReminder:task', 'old-task']]);
+  await useAuthStore.getState().deleteAccount();
+  expect(await AsyncStorage.getItem(`activityDraft:${owner}`)).toBeNull();
+  expect(await AsyncStorage.getItem('activityDraft:other')).toBe('other draft');
+  expect(await AsyncStorage.getItem('mutation:unknown-owner-hash')).toBe('retry-uuid');
+  expect(await AsyncStorage.getItem('dailyReminderNotificationId')).toBeNull();
+  expect(await AsyncStorage.getItem('plannedActivityReminder:task')).toBeNull();
+  expect(await SecureStore.getItemAsync('levelup.session')).toBeNull();
+  expect(useAuthStore.getState().user).toBeNull();
+  expect(Notifications.dismissAllNotificationsAsync).toHaveBeenCalled();
+  expect(await AsyncStorage.getItem('language')).toBe('uk');
+});
+test('in-flight and late draft writes cannot resurrect deleted data', async () => {
+  const owner = 'delete-race';
+  const original = jest.mocked(AsyncStorage.setItem).getMockImplementation()!;
+  let release!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const spy = jest.spyOn(AsyncStorage, 'setItem').mockImplementationOnce(async (key, value) => {
+    started(); await new Promise<void>(resolve => { release = resolve; }); await original(key, value);
+  });
+  const write = userData.saveDraft(owner, 'private');
+  await ready;
+  const marking = userData.beginDeletion(owner);
+  const purge = userData.purge(owner);
+  const late = userData.saveDraft(owner, 'late private');
+  release();
+  await Promise.all([write, marking, purge, late]);
+  expect(await AsyncStorage.getItem(`activityDraft:${owner}`)).toBeNull();
+  await userData.finishDeletion(owner);
+  spy.mockImplementation(original);
+});
+test('failed remote deletion preserves session and unsaved work', async () => {
+  const owner = 'delete-unavailable';
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await userData.saveDraft(owner, 'private');
+  jest.mocked(authService.deleteMe).mockRejectedValueOnce({ response: { status: 503 } });
+  await expect(useAuthStore.getState().deleteAccount()).rejects.toMatchObject({ response: { status: 503 } });
+  expect(useAuthStore.getState().user?.id).toBe(owner);
+  expect(await userData.readDraft(owner)).toBe('private');
+});
+test('late deletion response preserves the new account and its notifications', async () => {
+  const owner = 'delete-old';
+  await useAuthStore.getState().setAuth('old-token', user(owner));
+  await userData.saveDraft(owner, 'old draft');
+  let done!: () => void;
+  jest.mocked(authService.deleteMe).mockReturnValueOnce(new Promise(resolve => { done = resolve; }));
+  const deleting = useAuthStore.getState().deleteAccount();
+  await useAuthStore.getState().setAuth('new-token', user('new-owner'));
+  await userData.saveDraft('new-owner', 'new draft');
+  await useSettingsStore.getState().setNotificationsEnabled(true);
+  done(); await deleting;
+  expect(useAuthStore.getState().user?.id).toBe('new-owner');
+  expect(await SecureStore.getItemAsync('levelup.session')).toContain('new-token');
+  expect(await userData.readDraft('new-owner')).toBe('new draft');
+  expect(useSettingsStore.getState().notificationsEnabled).toBe(true);
+  expect(await AsyncStorage.getItem(`activityDraft:${owner}`)).toBeNull();
+});
+test('late permission result cannot re-enable reminders after deletion', async () => {
+  await useAuthStore.getState().setAuth('token', user('delete-permission'));
+  let done!: (granted: boolean) => void;
+  const permission = jest.spyOn(notificationService, 'requestPermission').mockReturnValueOnce(new Promise(resolve => { done = resolve; }));
+  const enabling = useSettingsStore.getState().setNotificationsEnabled(true);
+  await useAuthStore.getState().deleteAccount();
+  done(true); await enabling;
+  expect(useSettingsStore.getState().notificationsEnabled).toBe(false);
+  expect(await AsyncStorage.getItem('notificationsEnabled')).toBeNull();
+  permission.mockRestore();
+});
+test('failed local purge is retried at startup before restoring a session', async () => {
+  const owner = 'delete-retry';
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await userData.saveDraft(owner, 'private');
+  const original = jest.mocked(AsyncStorage.removeItem).getMockImplementation()!;
+  const removal = jest.spyOn(AsyncStorage, 'removeItem').mockImplementation(async key => {
+    if (key === `activityDraft:${owner}`) throw new Error('storage unavailable');
+    return original(key);
+  });
+  await expect(useAuthStore.getState().deleteAccount()).rejects.toThrow('LOCAL_CLEANUP_PENDING');
+  expect(await userData.pendingDeletions()).toContain(owner);
+  removal.mockImplementation(original);
+  await useAuthStore.getState().loadFromStorage();
+  expect(await AsyncStorage.getItem(`activityDraft:${owner}`)).toBeNull();
+  expect(await userData.pendingDeletions()).not.toContain(owner);
+  expect(useAuthStore.getState().user).toBeNull();
+});

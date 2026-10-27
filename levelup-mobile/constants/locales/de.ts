@@ -209,6 +209,7 @@ export const de: TranslationDictionary = {
   'settings.deleteAccount': 'Konto löschen',
   'settings.deleteConfirmTitle': 'Konto löschen',
   'settings.deleteConfirmBody': 'Dadurch werden dein Konto und alle LevelUp-Daten dauerhaft gelöscht.',
+  'settings.localCleanupPending': "Dein Konto wurde gelöscht. Einige lokale Daten konnten nicht entfernt werden. Starte LevelUp neu, um die Bereinigung zu wiederholen.",
   'settings.deleteFailed': 'Konto konnte nicht gelöscht werden',
   'notifications.title': 'LevelUp-Erinnerung',
   'notifications.body': 'Nimm dir heute ein paar Minuten, um eine Aufgabe abzuschließen.',
