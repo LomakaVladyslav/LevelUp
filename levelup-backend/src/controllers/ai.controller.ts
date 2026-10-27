@@ -1,3 +1,4 @@
+import { AI_FEATURES_ENABLED } from '../services/ai-policy';
 import { dateOnly } from '../utils/validation';
 import { dateKeyInTimezone, normalizeTimezone } from '../services/planned-activity-metrics.service';
 import { Request, Response } from 'express';
@@ -105,6 +106,10 @@ const parseStructuredReply = (content: string): StructuredAiReply => {
 };
 
 export const chat = async (req: Request, res: Response): Promise<void> => {
+  if (!AI_FEATURES_ENABLED) {
+    res.status(503).json({ error: 'AI is disabled in LevelUp v1', errorCode: 'AI_DISABLED' });
+    return;
+  }
   try {
     const locale = getRequestLocale(req);
 

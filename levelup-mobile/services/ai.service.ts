@@ -1,3 +1,4 @@
+import { AI_FEATURES_ENABLED } from '../constants/features';
 import api from './api';
 import { SuggestedActivity } from '../types';
 
@@ -9,6 +10,7 @@ export type AiMessage = {
 
 export const aiService = {
   chat: async (messages: AiMessage[], timezone?: string) => {
+    if (!AI_FEATURES_ENABLED) throw new Error('AI_DISABLED');
     const { data } = await api.post('/ai/chat', { messages: messages.slice(-12).map(({ role, content }) => ({ role, content })), timezone }, { timeout: 30000 });
     return data.message as AiMessage;
   },

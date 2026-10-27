@@ -1,5 +1,6 @@
+import { AI_FEATURES_ENABLED } from '../../constants/features';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { ActionButton, pageContent } from '../../components/ScreenUi';
 import { apiContext } from '../../services/api-context';
 import { useMemo, useRef, useState } from 'react';
@@ -35,6 +36,10 @@ const getDeviceTimezone = () => {
 };
 
 export default function AiScreen() {
+  return AI_FEATURES_ENABLED ? <AiChatScreen /> : <Redirect href="/(tabs)/profile" />;
+}
+
+function AiChatScreen() {
   const t = useT();
   const router = useRouter();
   const headerHeight = useHeaderHeight();

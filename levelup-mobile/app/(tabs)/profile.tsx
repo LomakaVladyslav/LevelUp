@@ -52,7 +52,6 @@ export default function ProfileScreen() {
       <View style={styles.actions}>
         <ActionButton label={t('tabs.stats')} onPress={() => router.navigate('/(tabs)/stats')} />
         <ActionButton label={t('profile.settings')} variant="secondary" onPress={() => router.navigate('/(tabs)/settings')} />
-        <ActionButton label={t('tabs.ai')} variant="secondary" onPress={() => router.navigate('/(tabs)/ai')} />
         <ActionButton label={t('profile.logOut')} variant="danger" onPress={handleLogout} />
       </View>
     </ScrollView>

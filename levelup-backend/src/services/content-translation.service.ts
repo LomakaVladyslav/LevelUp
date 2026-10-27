@@ -1,3 +1,4 @@
+import { AI_FEATURES_ENABLED } from './ai-policy';
 import { createHash } from 'crypto';
 import OpenAI from 'openai';
 import prisma from '../utils/prisma';
@@ -123,6 +124,7 @@ const generateWithOpenAI = async (
   items: TranslationInput[],
   locale: SupportedLocale,
 ): Promise<GeneratedTranslation[]> => {
+  if (!AI_FEATURES_ENABLED) throw new Error('AI is disabled in LevelUp v1');
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is not configured');
   }
@@ -357,7 +359,7 @@ export const localizeActivities = async <
   activities: T[],
   locale: SupportedLocale,
 ) =>
-  resolveLocalizedRecords(activities, locale, {
+  resolveLocalizedRecords(activities, AI_FEATURES_ENABLED ? locale : 'en', {
     generate: generateWithOpenAI,
     background: true,
     save: async (translations) => {
@@ -395,7 +397,7 @@ export const localizePlannedActivities = async <
   activities: T[],
   locale: SupportedLocale,
 ) =>
-  resolveLocalizedRecords(activities, locale, {
+  resolveLocalizedRecords(activities, AI_FEATURES_ENABLED ? locale : 'en', {
     generate: generateWithOpenAI,
     background: true,
     save: async (translations) => {
