@@ -2,7 +2,8 @@
   "scripts": {
     "dev:backend": "npm --prefix levelup-backend run dev",
     "dev:mobile": "npm --prefix levelup-mobile run start:tunnel",
-    "check": "npm --prefix levelup-backend test && npm --prefix levelup-backend run build && npm --prefix levelup-mobile run typecheck && npm --prefix levelup-mobile test"
+    "check": "npm --prefix levelup-backend run lint && npm --prefix levelup-backend test && npm --prefix levelup-backend run build && npm --prefix levelup-mobile run lint && npm --prefix levelup-mobile run typecheck && npm --prefix levelup-mobile test",
+    "test:db": "npm --prefix levelup-backend run test:db"
   },
   "devDependencies": {
     "prisma-erd-generator": "^2.4.3"

@@ -1,18 +1,19 @@
-import prisma from '../utils/prisma';
+import { Prisma } from '@prisma/client';
 import { levelFromXp } from '../utils/constants';
 
 export async function awardXP(
   userId: string,
   amount: number,
-  reason: string
+  reason: string,
+  db: Prisma.TransactionClient,
 ): Promise<{ levelUp: boolean; newLevel: number; xpGained: number }> {
   // 1. Record this XP gain in history (useful for the stats chart)
-  await prisma.xpHistory.create({
+  await db.xpHistory.create({
     data: { userId, amount, reason },
   });
 
   // 2. Add XP to the user's total
-  const updatedUser = await prisma.user.update({
+  const updatedUser = await db.user.update({
     where: { id: userId },
     data: { xp: { increment: amount } },
   });
@@ -22,7 +23,7 @@ export async function awardXP(
   const leveledUp = correctLevel > updatedUser.level;
 
   if (leveledUp) {
-    await prisma.user.update({
+    await db.user.update({
       where: { id: userId },
       data: { level: correctLevel },
     });

@@ -1,3 +1,5 @@
+import { dateOnly } from '../utils/validation';
+import { dateKeyInTimezone, normalizeTimezone } from '../services/planned-activity-metrics.service';
 import { Request, Response } from 'express';
 import OpenAI from 'openai';
 import prisma from '../utils/prisma';
@@ -39,13 +41,13 @@ const isChatMessage = (message: unknown): message is ChatMessage => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-const isDateOnly = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value);
+const isDateOnly = (value: string): boolean => !!dateOnly(value);
 
 const normalizeSuggestedActivity = (value: unknown): SuggestedActivity | null => {
   if (!isRecord(value)) return null;
 
   const title = typeof value.title === 'string' ? value.title.trim() : '';
-  if (!title) return null;
+  if (!title || title.length > 200) return null;
 
   const type = typeof value.type === 'string' && validTypes.includes(value.type)
     ? value.type as SuggestedActivity['type']
@@ -60,6 +62,7 @@ const normalizeSuggestedActivity = (value: unknown): SuggestedActivity | null =>
   const dueDate = typeof value.dueDate === 'string' && isDateOnly(value.dueDate)
     ? value.dueDate
     : null;
+  if (scheduleType === 'DATE' && !dueDate) return null;
   const dueTimeMinutesValue = value.dueTimeMinutes;
   const dueTimeMinutes = typeof dueTimeMinutesValue === 'number' &&
     Number.isInteger(dueTimeMinutesValue) &&
@@ -122,6 +125,10 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (messages.length > 100 || messages.some((message) => !isChatMessage(message) || message.content.length > 4000)) {
+      res.status(400).json({ error: 'Invalid or oversized messages', errorCode: 'AI_MESSAGES_INVALID' });
+      return;
+    }
     const cleanedMessages = messages.slice(-12).filter(isChatMessage);
     if (cleanedMessages.length === 0) {
       res.status(400).json({
@@ -141,12 +148,12 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 25000, maxRetries: 0 });
     const transcript = cleanedMessages
       .map((message) => `${message.role}: ${message.content.trim()}`)
       .join('\n');
-    const timezone = typeof req.body.timezone === 'string' ? req.body.timezone : 'UTC';
-    const today = new Date().toISOString().split('T')[0];
+    const timezone = normalizeTimezone(typeof req.body.timezone === 'string' ? req.body.timezone : 'UTC');
+    const today = dateKeyInTimezone(new Date(), timezone);
 
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.4-mini',
@@ -221,12 +228,12 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
           },
         },
       },
-      max_output_tokens: 600,
+      max_output_tokens: 2200,
     });
 
     const content = response.output_text?.trim();
 
-    if (!content) {
+    if (!content || response.status === 'incomplete') {
       res.status(502).json({
         error: 'AI returned an empty response',
         errorCode: 'AI_EMPTY_RESPONSE',

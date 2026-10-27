@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
   pull_request:
@@ -7,31 +6,39 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: levelup-ci-only
+          POSTGRES_DB: levelup_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d levelup_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:levelup-ci-only@127.0.0.1:5432/levelup_test
+      EXPO_PUBLIC_API_BASE_URL: https://levelup.example.test
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             levelup-backend/package-lock.json
             levelup-mobile/package-lock.json
-
-      - name: Install backend dependencies
+      - name: Install backend
         run: npm ci
         working-directory: levelup-backend
-
-      - name: Install mobile dependencies
-        run: npm ci --legacy-peer-deps
+      - name: Install mobile
+        run: npm ci
         working-directory: levelup-mobile
-
-      - name: Generate Prisma Client
-        run: npm run generate
-        working-directory: levelup-backend
-
-      - name: Run checks
+      - name: Lint, tests, backend build, strict mobile typecheck
         run: npm run check
+      - name: PostgreSQL transactions, races, retry and forced failures
+        run: npm run test:db
+      - name: Export both production mobile bundles
+        run: npx expo export --platform ios --platform android --output-dir /tmp/levelup-export
+        working-directory: levelup-mobile

@@ -3,6 +3,11 @@ import { TranslationKey } from '../constants/i18n';
 type Translator = (key: TranslationKey) => string;
 
 const errorCodeKeys: Record<string, TranslationKey> = {
+  ACTIVITY_CHANGED: 'activities.changed',
+  ACTIVITY_ALREADY_COMPLETED: 'activities.alreadyCompleted',
+  RATE_LIMITED: 'common.tryLater',
+  SERVICE_UNAVAILABLE: 'common.loadFailed',
+  AUTH_SESSION_EXPIRED: 'auth.invalidCredentials',
   AUTH_EMAIL_USERNAME_REQUIRED: 'auth.emailUsernameRequired',
   AUTH_EMAIL_PASSWORD_REQUIRED: 'auth.emailPasswordRequired',
   AUTH_EMAIL_REQUIRED: 'auth.emailRequired',
@@ -58,6 +63,8 @@ export const getApiErrorMessage = (
     (typeof message === 'string' ? legacyMessageKeys[message] : undefined);
 
   if (translationKey) return t(translationKey);
+  if (!error?.response && ['ERR_NETWORK', 'ECONNABORTED', 'ETIMEDOUT'].includes(error?.code)) return t('common.networkError');
+  if (error?.response?.status >= 500) return t(fallbackKey);
   return typeof message === 'string' && message.trim()
     ? message
     : t(fallbackKey);

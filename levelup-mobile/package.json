@@ -12,20 +12,23 @@
     "ios": "expo start --ios",
     "ios:dev": "expo run:ios --device",
     "typecheck": "tsc --noEmit",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
-    "@shopify/react-native-skia": "2.2.12",
     "axios": "^1.6.2",
     "expo": "~54.0.0",
     "expo-constants": "~18.0.13",
+    "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.21",
+    "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.11",
     "expo-linking": "~8.0.12",
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
+    "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-updates": "~29.0.18",
     "react": "19.1.0",
@@ -35,19 +38,21 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-worklets": "0.5.1",
-    "victory-native": "^41.1.0",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
-    "@testing-library/react-native": "^12.4.5",
+    "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",
     "@types/node": "^20.19.43",
     "@types/react": "~19.1.10",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "jest": "^29.7.0",
     "jest-expo": "~54.0.17",
-    "react-test-renderer": "^18.3.1",
-    "typescript": "~5.9.2"
+    "test-renderer": "1.1.0",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.69.0"
   },
   "jest": {
     "preset": "jest-expo",
@@ -55,7 +60,10 @@
       "<rootDir>/jest.setup.ts"
     ],
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo/.*|expo-modules-core|expo-router|@react-navigation/.*|react-native-reanimated|react-native-safe-area-context|react-native-svg)/)"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo/.*|expo-modules-core|expo-router|@react-navigation/.*|react-native-reanimated|react-native-safe-area-context|react-native-svg|react-native-worklets)/)"
     ]
+  },
+  "overrides": {
+    "postcss": "^8.5.28"
   }
 }

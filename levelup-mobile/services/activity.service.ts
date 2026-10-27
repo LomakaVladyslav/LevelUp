@@ -1,4 +1,6 @@
+import { invalidateData } from '../stores/data.store';
 import api from './api';
+import { mutate } from './mutation';
 import { Activity, ActivityResult, ActivityType } from '../types';
 
 export const activityService = {
@@ -8,8 +10,7 @@ export const activityService = {
     description?: string;
     duration?: number;
   }) => {
-    const response = await api.post('/activities', data);
-    return response.data as ActivityResult;
+    return mutate<ActivityResult>('post', '/activities', data);
   },
 
   getAll: async (page = 1) => {
@@ -22,5 +23,6 @@ export const activityService = {
 
   delete: async (id: string) => {
     await api.delete(`/activities/${id}`);
+    invalidateData();
   },
 };

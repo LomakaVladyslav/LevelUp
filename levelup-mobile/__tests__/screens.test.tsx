@@ -1,7 +1,15 @@
+import SettingsScreen from '../app/(tabs)/settings';
+import ActivityHistoryScreen from '../app/(tabs)/activity-history';
+import { apiContext } from '../services/api-context';
 import React from 'react';
+import { Alert } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { act } from '@testing-library/react-native';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import LoginScreen from '../app/auth/login';
 import RegisterScreen from '../app/auth/register';
+import StatsScreen from '../app/(tabs)/stats';
 import HomeScreen from '../app/(tabs)/index';
 import ActivitiesScreen from '../app/(tabs)/activities';
 import { activityService } from '../services/activity.service';
@@ -27,12 +35,16 @@ jest.mock('../services/auth.service', () => ({
     login: jest.fn(),
     register: jest.fn(),
     resetPassword: jest.fn(),
+    updateMe: jest.fn(),
+    deleteMe: jest.fn(),
   },
 }));
 
 jest.mock('../services/plannedActivity.service', () => ({
   plannedActivityService: {
     complete: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
     getAll: jest.fn(),
   },
 }));
@@ -46,6 +58,7 @@ jest.mock('../services/recommendation.service', () => ({
 jest.mock('../services/stats.service', () => ({
   statsService: {
     getOverview: jest.fn(),
+    getWeekly: jest.fn(),
   },
 }));
 
@@ -70,6 +83,11 @@ beforeEach(() => {
     notificationsEnabled: false,
   });
   jest.mocked(authService.getMe).mockResolvedValue(user);
+  jest.mocked(useLocalSearchParams).mockReturnValue({});
+  jest.mocked(statsService.getOverview).mockResolvedValue({ user: { id: user.id, username: user.username, level: 1, totalXp: 0, xpProgress: { current: 0, required: 100, percentage: 0 } }, streak: { current: 0, longest: 0 }, totalActivities: 0, unlockedAchievements: 0 });
+  jest.mocked(activityService.getAll).mockResolvedValue({ activities: [], pagination: { total: 0, totalPages: 0, page: 1 } });
+  jest.mocked(recommendationService.getAll).mockResolvedValue([]);
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [], todayProgress: { completed: 0, total: 0, percentage: 0 } });
 });
 
 const plannedActivity: PlannedActivity = {
@@ -135,8 +153,8 @@ const completionResult: ActivityResult = {
   newAchievements: [],
 };
 
-test('login screen renders the default login state', () => {
-  render(<LoginScreen />);
+test('login screen renders the default login state', async () => {
+  await render(<LoginScreen />);
 
   expect(screen.getByText('LevelUp')).toBeTruthy();
   expect(screen.getByText('Log In')).toBeTruthy();
@@ -148,21 +166,24 @@ test('login screen shows invalid credentials inline', async () => {
     response: { data: { errorCode: 'AUTH_INVALID_CREDENTIALS' } },
   });
 
-  render(<LoginScreen />);
+  await render(<LoginScreen />);
 
-  fireEvent.changeText(screen.getByPlaceholderText('Email'), 'user@example.com');
-  fireEvent.changeText(screen.getByPlaceholderText('Password'), 'wrong-pass');
-  fireEvent.press(screen.getByText('Log In'));
+  await fireEvent.changeText(
+    screen.getByPlaceholderText('Email'),
+    'user@example.com',
+  );
+  await fireEvent.changeText(screen.getByPlaceholderText('Password'), 'wrong-pass');
+  await fireEvent.press(screen.getByText('Log In'));
 
   await waitFor(() => {
     expect(screen.getByText('Invalid email or password')).toBeTruthy();
   });
 });
 
-test('register screen validates short passwords inline', () => {
-  render(<RegisterScreen />);
+test('register screen validates short passwords inline', async () => {
+  await render(<RegisterScreen />);
 
-  fireEvent.changeText(
+  await fireEvent.changeText(
     screen.getByPlaceholderText('Password (min 6 characters)'),
     '123',
   );
@@ -170,22 +191,24 @@ test('register screen validates short passwords inline', () => {
   expect(screen.getByText('Password must be at least 6 characters')).toBeTruthy();
 });
 
-test('register screen displays email availability errors', async () => {
-  jest.mocked(authService.availability).mockImplementation(async (params) =>
-    params.email
-      ? { emailAvailable: false }
-      : { usernameAvailable: true },
+test('registration shows an atomic server uniqueness error inline', async () => {
+  jest.mocked(authService.register).mockRejectedValue({ response: { data: { errorCode: 'AUTH_EMAIL_IN_USE' } } });
+
+  await render(<RegisterScreen />);
+
+  await fireEvent.changeText(
+    screen.getByPlaceholderText('Email'),
+    'used@example.com',
   );
-
-  render(<RegisterScreen />);
-
-  fireEvent.changeText(screen.getByPlaceholderText('Email'), 'used@example.com');
-  fireEvent.changeText(screen.getByPlaceholderText('Username'), 'new-user');
-  fireEvent.changeText(
+  await fireEvent.changeText(
+    screen.getByPlaceholderText('Username'),
+    'new-user',
+  );
+  await fireEvent.changeText(
     screen.getByPlaceholderText('Password (min 6 characters)'),
     'secret1',
   );
-  fireEvent.press(screen.getByText('Next'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Create Account' }));
 
   await waitFor(() => {
     expect(screen.getByText('This email address is already in use')).toBeTruthy();
@@ -211,11 +234,11 @@ test('home screen renders empty activity state after loading dashboard data', as
   });
   jest.mocked(recommendationService.getAll).mockResolvedValue([]);
 
-  render(<HomeScreen />);
+  await render(<HomeScreen />);
 
   await waitFor(() => {
     expect(
-      screen.getByText('No activities yet. Go to the Log tab to get started!'),
+      screen.getByText('Completed tasks and earned XP will appear here.'),
     ).toBeTruthy();
   });
 });
@@ -226,7 +249,7 @@ test('activities screen renders empty planned activity state after loading', asy
     todayProgress: { completed: 0, total: 0, percentage: 0 },
   });
 
-  render(<ActivitiesScreen />);
+  await render(<ActivitiesScreen />);
 
   await waitFor(() => {
     expect(
@@ -241,16 +264,16 @@ test('activities create modal does not show the star badge text field', async ()
     todayProgress: { completed: 0, total: 0, percentage: 0 },
   });
 
-  render(<ActivitiesScreen />);
+  await render(<ActivitiesScreen />);
 
   await waitFor(() => {
     expect(screen.getByText('Create activity')).toBeTruthy();
   });
 
-  fireEvent.press(screen.getByText('Create activity'));
+  await fireEvent.press(screen.getByText('Create activity'));
 
   await waitFor(() => {
-    expect(screen.getByText('Type')).toBeTruthy();
+    expect(screen.getByText('Category')).toBeTruthy();
   });
   expect(screen.queryByText('Star badge text')).toBeNull();
   expect(screen.queryByPlaceholderText('Example: 20 focused minutes')).toBeNull();
@@ -263,13 +286,13 @@ test('activities screen shows celebration after completing an activity', async (
   });
   jest.mocked(plannedActivityService.complete).mockResolvedValue(completionResult);
 
-  render(<ActivitiesScreen />);
+  await render(<ActivitiesScreen />);
 
   await waitFor(() => {
     expect(screen.getByText('Read TypeScript')).toBeTruthy();
   });
 
-  fireEvent.press(screen.getByText('Complete'));
+  await fireEvent.press(screen.getByText('Complete'));
 
   await waitFor(() => {
     expect(plannedActivityService.complete).toHaveBeenCalledWith('planned-1');
@@ -277,4 +300,177 @@ test('activities screen shows celebration after completing an activity', async (
   await waitFor(() => {
     expect(screen.getByTestId('completion-celebration')).toBeTruthy();
   });
+});
+
+test('registration submits once from a single form without availability requests', async () => {
+  jest.mocked(authService.register).mockReturnValue(new Promise(() => {}));
+  await render(<RegisterScreen />);
+  await fireEvent.changeText(screen.getByPlaceholderText('Email'), 'new@example.test');
+  await fireEvent.changeText(screen.getByPlaceholderText('Username'), 'new-user');
+  await fireEvent.changeText(screen.getByPlaceholderText('Password (min 6 characters)'), 'secret1');
+  await fireEvent.press(screen.getByRole('button', { name: 'Create Account' }));
+  await fireEvent(screen.getByPlaceholderText('Password (min 6 characters)'), 'submitEditing');
+  expect(authService.register).toHaveBeenCalledTimes(1);
+  expect(authService.availability).not.toHaveBeenCalled();
+});
+
+
+test('Home shows an actionable task while optional recommendations and progress are still loading', async () => {
+  jest.mocked(recommendationService.getAll).mockReturnValue(new Promise(() => {}));
+  jest.mocked(statsService.getOverview).mockReturnValue(new Promise(() => {}));
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<HomeScreen />);
+  await waitFor(() => expect(screen.getByText(/Read TypeScript/)).toBeTruthy());
+  expect(screen.getByText('Complete')).toBeTruthy();
+  await fireEvent.press(screen.getByText('+ Create activity'));
+  expect(useRouter().navigate).toHaveBeenCalledWith({ pathname: '/(tabs)/activities', params: { create: '1' } });
+});
+
+test('Home completion blocks duplicate taps, preserves the task on failure and retries successfully', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  let reject!: (error: unknown) => void;
+  jest.mocked(plannedActivityService.complete).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+  await render(<HomeScreen />);
+  await fireEvent.press(screen.getByText('Complete'));
+  await fireEvent.press(screen.getByText('Completing...'));
+  expect(plannedActivityService.complete).toHaveBeenCalledTimes(1);
+  await act(async () => reject({ message: 'Network Error' }));
+  expect(screen.getByText(/Read TypeScript/)).toBeTruthy();
+  expect(screen.getByText('Complete')).toBeTruthy();
+  jest.mocked(plannedActivityService.complete).mockResolvedValue({ ...completionResult, totalXp: 90, achievementXpGained: 60 });
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await fireEvent.press(screen.getByText('Complete'));
+  await waitFor(() => expect(useAuthStore.getState().user?.xp).toBe(90));
+  expect(screen.getByTestId('completion-celebration')).toBeTruthy();
+  expect(screen.queryByText('Complete')).toBeNull();
+  alert.mockRestore();
+});
+
+test('Home create link opens a draft immediately even when the task list is slow', async () => {
+  jest.mocked(useLocalSearchParams).mockReturnValue({ create: '1' });
+  jest.mocked(plannedActivityService.getAll).mockReturnValue(new Promise(() => {}));
+  await AsyncStorage.setItem('activityDraft:user-1', JSON.stringify({ title: 'Read one chapter', description: '', selectedType: 'STUDY', scheduleType: 'SIMPLE' }));
+  await render(<ActivitiesScreen />);
+  await waitFor(() => expect(screen.getByDisplayValue('Read one chapter')).toBeTruthy());
+  expect(useRouter().setParams).toHaveBeenCalledWith({ create: undefined });
+});
+
+test('create keeps the draft after a failed save, then creates one task and clears the draft', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByText('Paused'));
+  await fireEvent.press(screen.getByText('Create activity'));
+  await waitFor(() => expect(screen.getByText('Save')).toBeTruthy());
+  await fireEvent.changeText(screen.getByPlaceholderText('e.g. Read chapter 5, Morning run...'), 'Read TypeScript');
+  jest.mocked(plannedActivityService.create).mockRejectedValueOnce({ message: 'Network Error' });
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(alert).toHaveBeenCalled());
+  expect(screen.getByDisplayValue('Read TypeScript')).toBeTruthy();
+  expect(JSON.parse((await AsyncStorage.getItem('activityDraft:user-1'))!).title).toBe('Read TypeScript');
+  jest.mocked(plannedActivityService.create).mockResolvedValue({ plannedActivity });
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(screen.queryByText('Save')).toBeNull());
+  expect(screen.getByText(/Read TypeScript/)).toBeTruthy();
+  await waitFor(async () => expect(await AsyncStorage.getItem('activityDraft:user-1')).toBeNull());
+  alert.mockRestore();
+});
+
+test('registration accepts an omitted age', async () => {
+  jest.mocked(authService.availability).mockResolvedValue({ emailAvailable: true, usernameAvailable: true });
+  jest.mocked(authService.register).mockResolvedValue({ token: 'registered', user: useAuthStore.getState().user! });
+  await render(<RegisterScreen />);
+  await fireEvent.changeText(screen.getByPlaceholderText('Email'), 'new@example.test');
+  await fireEvent.changeText(screen.getByPlaceholderText('Username'), 'new-user');
+  await fireEvent.changeText(screen.getByPlaceholderText('Password (min 6 characters)'), 'secret1');
+  await fireEvent.press(screen.getByRole('button', { name: 'Create Account' }));
+  await waitFor(() => expect(authService.register).toHaveBeenCalledWith('new@example.test', 'new-user', 'secret1'));
+});
+
+
+test('Home offers one recovery action when both progress and tasks fail', async () => {
+  jest.mocked(statsService.getOverview).mockRejectedValueOnce(new Error('Offline'));
+  jest.mocked(plannedActivityService.getAll).mockRejectedValueOnce(new Error('Offline'));
+  await render(<HomeScreen />);
+  await waitFor(() => expect(screen.getAllByText('Retry')).toHaveLength(1));
+  await fireEvent.press(screen.getByText('Retry'));
+  await waitFor(() => expect(screen.queryByText('Retry')).toBeNull());
+  expect(plannedActivityService.getAll).toHaveBeenCalledTimes(2);
+  expect(statsService.getOverview).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('Total XP: 0')).toBeTruthy();
+});
+
+test('progress clarifies its time period and includes direct routes to history and achievements', async () => {
+  jest.mocked(statsService.getWeekly).mockResolvedValue([{ date: '2026-09-08', count: 2, xpEarned: 140 }]);
+  await render(<StatsScreen />);
+  expect(screen.getByText('Completed · 7 days')).toBeTruthy();
+  expect(screen.getByText('XP includes task completions and achievement rewards.')).toBeTruthy();
+  await fireEvent.press(screen.getByText('Achievements'));
+  expect(useRouter().navigate).toHaveBeenCalledWith('/(tabs)/achievements');
+  await fireEvent.press(screen.getByText('Activity History'));
+  expect(useRouter().navigate).toHaveBeenCalledWith('/(tabs)/activity-history');
+});
+
+
+test('task titles edit directly and the completed list has an explicit route', async () => {
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  expect(screen.getByDisplayValue('Read TypeScript')).toBeTruthy();
+  await fireEvent.press(screen.getByText('Cancel'));
+  await fireEvent.press(screen.getByText('Completed →'));
+  expect(useRouter().navigate).toHaveBeenCalledWith('/(tabs)/activity-history');
+});
+
+test('empty history leads to tasks instead of a dead end', async () => {
+  await render(<ActivityHistoryScreen />);
+  await fireEvent.press(screen.getByText('All tasks'));
+  expect(useRouter().navigate).toHaveBeenCalledWith('/(tabs)/activities');
+});
+
+test('age save is serialized, keeps newly earned XP, and confirms inline', async () => {
+  let resolve!: (value: NonNullable<ReturnType<typeof useAuthStore.getState>['user']>) => void;
+  jest.mocked(authService.updateMe).mockReturnValue(new Promise((done) => { resolve = done; }));
+  await render(<SettingsScreen />);
+  await fireEvent.changeText(screen.getByLabelText('Age'), '25');
+  await fireEvent.press(screen.getByText('Save'));
+  await fireEvent.press(screen.getByText('Save'));
+  expect(authService.updateMe).toHaveBeenCalledTimes(1);
+  const user = useAuthStore.getState().user!;
+  await act(async () => { await useAuthStore.getState().setUser({ ...user, xp: 240, level: 3 }); resolve({ ...user, age: 25 }); });
+  expect(useAuthStore.getState().user).toMatchObject({ xp: 240, age: 25, level: 3 });
+  expect(screen.getByText('Settings saved')).toBeTruthy();
+});
+
+test('an account deletion confirmation cannot act on a different session', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  await render(<SettingsScreen />);
+  await fireEvent.press(screen.getByText('Delete account'));
+  const confirm = alert.mock.calls[0][2]![1].onPress!;
+  apiContext.setToken('different-session', 'user-2');
+  await act(async () => { confirm(); });
+  expect(authService.deleteMe).not.toHaveBeenCalled();
+  alert.mockRestore();
+});
+
+
+test('a paused daily task can resume even if it was completed earlier today', async () => {
+  const paused: PlannedActivity = { ...plannedActivity, status: 'DISABLED', scheduleType: 'DAILY', isCompletedToday: true };
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [paused], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  jest.mocked(plannedActivityService.update).mockResolvedValue({ plannedActivity: { ...paused, status: 'ACTIVE' } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByText('Paused'));
+  await fireEvent.press(screen.getByRole('button', { name: 'Resume: Read TypeScript' }));
+  expect(plannedActivityService.update).toHaveBeenCalledWith(paused.id, { status: 'ACTIVE', updatedAt: paused.updatedAt });
+  expect(plannedActivityService.complete).not.toHaveBeenCalled();
+});
+
+
+test('slow history never blocks Home XP and streak', async () => {
+  jest.mocked(activityService.getAll).mockReturnValue(new Promise(() => {}));
+  await render(<HomeScreen />);
+  expect(screen.getByText('Total XP: 0')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Day streak' }).props.accessibilityValue).toEqual({ text: '0' });
+  expect(screen.getByRole('button', { name: 'Progress' }).props.accessibilityValue).toEqual({ text: 'Level 1. Total XP: 0' });
 });

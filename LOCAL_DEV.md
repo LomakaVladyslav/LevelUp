@@ -1,120 +1,56 @@
-# LevelUp Local Development
+# LevelUp local development
 
-Цей runbook описує прямий локальний запуск бекенду і мобільного додатка з
-їхніх підпапок. Це основний шлях для Expo Go на фізичному телефоні.
+Use Node 22 and a local PostgreSQL database. Install from the committed lockfiles:
 
-## 1. Бекенд
+```sh
+npm --prefix levelup-backend ci
+npm --prefix levelup-mobile ci
+```
 
-Відкрий окремий термінал:
+Copy each subproject's `.env.example` to its local `.env`, filling in real local
+values. Do not commit credentials. The server requires a database and a JWT secret
+of at least 32 characters. Configure SMTP only if testing email reset, and OpenAI
+only if testing AI features.
 
-```bash
-cd /Users/vladyslav/Projects/levelup/levelup-backend
-npm install
+Prepare a new local database and start the server:
+
+```sh
+cd levelup-backend
+npm run generate
+npx prisma migrate deploy
+npm run seed
 npm run dev
 ```
 
-`npm install` потрібно запускати після клонування репозиторію або коли змінився
-`package.json` / `package-lock.json`.
+For a physical phone, set the mobile URL to `http://YOUR_LAN_IP:3000` and use the
+same Wi-Fi network. For the Android emulator, use `http://10.0.2.2:3000`; for iOS
+Simulator, `http://localhost:3000`. `/api` is appended automatically. Verify `/health`
+from the device. An Expo tunnel forwards the bundler, not the backend.
 
-Якщо `npm install` падає через peer dependency conflict, тоді повтори
-інсталяцію з fallback-прапорцем:
-
-```bash
-npm install --legacy-peer-deps
+```sh
+cd levelup-mobile
+npm run start:clear
 ```
 
-Після старту бекенд має бути доступний на порту `3000`.
+Use an updated native development build after changing native modules or plugins.
+Expo Go does not replace release testing of secure storage, notifications and
+platform permissions. Use `npm run android:dev` / `npm run ios:dev` when the SDK,
+device/simulator and native tooling are installed.
 
-## 2. Mobile / Expo Go
+All automated checks:
 
-Відкрий другий термінал:
-
-```bash
-cd /Users/vladyslav/Projects/levelup/levelup-mobile
-npm install --legacy-peer-deps
-npx expo start -c
+```sh
+npm run check
 ```
 
-`npm install --legacy-peer-deps` потрібно запускати після клонування репозиторію
-або коли змінився `levelup-mobile/package.json` /
-`levelup-mobile/package-lock.json`.
+Real PostgreSQL tests use a separate disposable DB and deliberately force errors
+and terminate a transaction connection. Never point them at a shared database:
 
-`npx expo start -c` стартує Expo з очищенням кешу. Це важливо після змін у
-`.env`, залежностях або коли на телефоні був синій екран з помилкою.
-
-## 3. API URL для телефону
-
-Мобільний додаток читає `EXPO_PUBLIC_API_BASE_URL` з
-`levelup-mobile/.env`. Для фізичного телефону треба використовувати LAN IP
-твого Mac, а не `localhost`.
-
-Отримати поточний Wi-Fi IP:
-
-```bash
-ipconfig getifaddr en0
+```sh
+docker run --rm --name levelup-test-db -e POSTGRES_PASSWORD=levelup-test-only -e POSTGRES_DB=levelup_test -p 127.0.0.1:55432:5432 -d postgres:16-alpine
+TEST_DATABASE_URL=postgresql://postgres:levelup-test-only@127.0.0.1:55432/levelup_test npm run test:db
+docker stop levelup-test-db
 ```
 
-Оновити `levelup-mobile/.env`:
-
-```bash
-EXPO_PUBLIC_API_BASE_URL=http://YOUR_LAN_IP:3000
-```
-
-Не додавай `/api`. Додаток сам нормалізує URL і додає `/api` автоматично.
-
-## 4. Якщо на телефоні синій екран або стара помилка
-
-npx expo start -c --tunnel
-
-1. Зупини Expo в терміналі.
-2. Повністю закрий Expo Go на телефоні.
-3. Запусти Expo заново:
-
-```bash
-cd /Users/vladyslav/Projects/levelup/levelup-mobile
-npx expo start -c
-```
-
-4. Відкрий Expo Go знову і перескануй QR-код.
-5. Якщо помилка пов'язана з мережею, перевір `/health` з браузера телефону.
-
-## 5. Перевірка мережі
-
-У браузері телефона відкрий:
-
-```text
-http://YOUR_LAN_IP:3000/health
-```
-
-Якщо відповідь не приходить або сторінка не відкривається, телефон не може
-достукатися до бекенду. Перевір, що:
-
-- бекенд запущений через `npm run dev`;
-- Mac і телефон в одній мережі Wi-Fi;
-- у `levelup-mobile/.env` вказаний актуальний LAN IP;
-- у URL немає `/api` в кінці.
-
-## 6. Діагностика збереження активності
-
-Коли зберігаєш активність у додатку, дивись у термінал бекенду. Успішний запит
-має виглядати приблизно так:
-
-```json
-{
-  "type": "request",
-  "method": "POST",
-  "path": "/api/planned-activities",
-  "status": 201
-}
-```
-
-Як інтерпретувати результат:
-
-- Немає backend log: Expo не викликає цей бекенд. Перезапусти Expo через
-  `npx expo start -c`, повністю відкрий Expo Go заново і перескануй QR-код.
-- `401`: мобільний токен відсутній або протермінований. Вийди з акаунта і
-  залогінься знову.
-- `500`: запит дійшов до бекенду, але впав серверний код. Дивись помилку в
-  backend terminal; найчастіше це база даних, міграції, schema або env config.
-- `201`, але додаток все одно показує помилку: створення активності пройшло
-  успішно; треба дивитися mobile console на помилку після save.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for migration order, backups, legacy data audit,
+avatar migration, production configuration and release verification.

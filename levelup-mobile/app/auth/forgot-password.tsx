@@ -1,12 +1,10 @@
-import { useMemo, useState } from 'react';
+import { AuthFrame } from '../../components/AuthFrame';
+import { ActionButton } from '../../components/ScreenUi';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { Link } from 'expo-router';
 import { authService } from '../../services/auth.service';
@@ -24,8 +22,12 @@ export default function ForgotPasswordScreen() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleSubmit = async () => {
+    if (pending.current) return;
     setError('');
     setMessage('');
 
@@ -34,6 +36,7 @@ export default function ForgotPasswordScreen() {
       return;
     }
 
+    pending.current = true;
     setLoading(true);
     try {
       await authService.forgotPassword(email.trim());
@@ -43,22 +46,23 @@ export default function ForgotPasswordScreen() {
         getApiErrorMessage(submitError, t, 'common.somethingWrong'),
       );
     } finally {
-      setLoading(false);
+      pending.current = false;
+      if (mounted.current) setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <View style={styles.inner}>
+    <AuthFrame>
         <Text style={styles.title}>{t('forgotPassword.title')}</Text>
         <Text style={styles.subtitle}>{t('forgotPassword.subtitle')}</Text>
 
         <TextInput
           style={[styles.input, error ? styles.inputError : null]}
+          accessibilityLabel={t('auth.email')}
+          maxLength={254}
+          returnKeyType="send" onSubmitEditing={() => { void handleSubmit(); }}
           placeholder={t('auth.email')}
+          editable={!loading}
           value={email}
           onChangeText={(value) => {
             setEmail(value);
@@ -66,28 +70,19 @@ export default function ForgotPasswordScreen() {
             setMessage('');
           }}
           keyboardType="email-address"
-          autoCapitalize="none"
+          autoCapitalize="none" autoCorrect={false} autoComplete="email" textContentType="emailAddress"
           placeholderTextColor={colors.textMuted}
         />
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
         {message ? <Text style={styles.successText}>{message}</Text> : null}
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSubmit}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>
-            {loading ? t('forgotPassword.loading') : t('forgotPassword.button')}
-          </Text>
-        </TouchableOpacity>
+        <ActionButton label={t(loading ? 'forgotPassword.loading' : 'forgotPassword.button')} loading={loading} onPress={handleSubmit} style={{ marginTop: spacing.md }} />
 
-        <Link href="/auth/login" style={styles.link}>
+        <Link replace href="/auth/login" style={styles.link}>
           {t('forgotPassword.backToLogin')}
         </Link>
-      </View>
-    </KeyboardAvoidingView>
+    </AuthFrame>
   );
 }
 
@@ -103,13 +98,13 @@ const createStyles = (theme: AppTheme) => {
     },
     title: {
       ...typography.h1,
-      textAlign: 'center',
-      color: colors.primary,
+      textAlign: 'left',
+      color: colors.textPrimary,
       marginBottom: spacing.xs,
     },
     subtitle: {
       ...typography.small,
-      textAlign: 'center',
+      textAlign: 'left',
       color: colors.textSecondary,
       marginBottom: spacing.xl,
     },
@@ -130,7 +125,7 @@ const createStyles = (theme: AppTheme) => {
     },
     successText: {
       ...typography.small,
-      color: colors.success,
+      color: colors.successText,
       marginTop: spacing.sm,
     },
     button: {
@@ -145,11 +140,12 @@ const createStyles = (theme: AppTheme) => {
       color: colors.textOnPrimary,
       ...typography.bodyBold,
     },
-    link: {
-      marginTop: spacing.lg,
-      textAlign: 'center',
-      color: colors.primary,
-      ...typography.small,
+  link: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.md,
+    textAlign: 'center',
+    color: colors.primary,
+    ...typography.body,
     },
   });
 };

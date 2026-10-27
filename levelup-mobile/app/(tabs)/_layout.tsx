@@ -1,9 +1,9 @@
+import { Platform, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { ComponentProps } from 'react';
 import { useT } from '../../hooks/useT';
 import { useTheme } from '../../hooks/useTheme';
-import { LanguageSelector } from '../../components/LanguageSelector';
 
 type TabRouteName =
   | 'index'
@@ -23,7 +23,7 @@ function getTabIconName(
     case 'index':
       return focused ? 'home' : 'home-outline';
     case 'activities':
-      return focused ? 'add-circle' : 'add-circle-outline';
+      return focused ? 'checkbox' : 'checkbox-outline';
     case 'activity-history':
       return focused ? 'list' : 'list-outline';
     case 'ai':
@@ -41,10 +41,12 @@ function getTabIconName(
 
 export default function TabLayout() {
   const t = useT();
+  const router = useRouter();
   const { colors } = useTheme();
 
   return (
     <Tabs
+      backBehavior="history"
       screenOptions={({ route }) => ({
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
@@ -52,8 +54,21 @@ export default function TabLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
         },
+        headerLeft: ['activity-history', 'achievements', 'settings', 'ai'].includes(route.name) ? () => (
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.back')} onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+        ) : undefined,
+        tabBarHideOnKeyboard: true,
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.textPrimary,
+        // The native navigation bar has fixed height; body text scales freely.
+        headerTitle: ({ children, tintColor }) => (
+          <Text accessibilityRole="header" numberOfLines={1} maxFontSizeMultiplier={1.5}
+            style={{ color: tintColor, fontSize: Platform.OS === 'ios' ? 17 : 20, fontWeight: '700' }}>
+            {children}
+          </Text>
+        ),
         tabBarIcon: ({ color, size, focused }) => (
           <Ionicons
             color={color}
@@ -65,11 +80,11 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: t('tabs.home'), tabBarLabel: t('tabs.home') }}
+        options={{ title: t('tabs.home'), tabBarLabel: t('tabs.home'), tabBarAccessibilityLabel: t('tabs.home') }}
       />
       <Tabs.Screen
         name="activities"
-        options={{ title: t('tabs.log'), tabBarLabel: t('tabs.log') }}
+        options={{ title: t('tabs.log'), tabBarLabel: t('tabs.log'), tabBarAccessibilityLabel: t('tabs.log') }}
       />
       <Tabs.Screen
         name="activity-history"
@@ -77,7 +92,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="ai"
-        options={{ title: t('tabs.ai'), tabBarLabel: t('tabs.ai') }}
+        options={{ title: t('tabs.ai'), href: null }}
       />
       <Tabs.Screen
         name="achievements"
@@ -85,14 +100,14 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="stats"
-        options={{ title: t('tabs.stats'), tabBarLabel: t('tabs.stats') }}
+        options={{ title: t('tabs.stats'), tabBarLabel: t('tabs.stats'), tabBarAccessibilityLabel: t('tabs.stats') }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: t('tabs.profile'),
           tabBarLabel: t('tabs.profile'),
-          headerRight: () => <LanguageSelector />,
+          tabBarAccessibilityLabel: t('tabs.profile'),
         }}
       />
       <Tabs.Screen

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { getAssetUrl } from '../services/api';
 import { useTheme } from '../hooks/useTheme';
@@ -12,11 +13,13 @@ export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) 
   const { colors } = useTheme();
   const source = getAssetUrl(avatarUrl);
   const radius = size / 2;
+  const [failedSource, setFailedSource] = useState<string | null>(null);
 
-  if (source) {
+  if (source && source !== failedSource) {
     return (
       <Image
         source={{ uri: source }}
+        onError={() => setFailedSource(source)}
         style={[
           styles.avatar,
           {
@@ -43,6 +46,8 @@ export function UserAvatar({ username, avatarUrl, size = 96 }: UserAvatarProps) 
       ]}
     >
       <Text
+        // The initial is a fixed-size avatar graphic, not body text.
+        allowFontScaling={false}
         style={[
           styles.initial,
           { color: colors.textOnPrimary, fontSize: size * 0.42 },

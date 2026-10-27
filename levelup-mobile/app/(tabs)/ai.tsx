@@ -1,3 +1,7 @@
+import { useHeaderHeight } from '@react-navigation/elements';
+import { useRouter } from 'expo-router';
+import { ActionButton, pageContent } from '../../components/ScreenUi';
+import { apiContext } from '../../services/api-context';
 import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,6 +36,8 @@ const getDeviceTimezone = () => {
 
 export default function AiScreen() {
   const t = useT();
+  const router = useRouter();
+  const headerHeight = useHeaderHeight();
   const theme = useTheme();
   const { colors } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -39,6 +45,8 @@ export default function AiScreen() {
   const listRef = useRef<FlatList<AiMessage>>(null);
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [input, setInput] = useState('');
+  const sendingRef = useRef(false);
+  const addingRef = useRef(false);
   const [sending, setSending] = useState(false);
   const [selectedSuggestions, setSelectedSuggestions] = useState<Record<string, boolean>>({});
   const [addedSuggestionMessages, setAddedSuggestionMessages] = useState<Record<string, boolean>>({});
@@ -78,7 +86,9 @@ export default function AiScreen() {
 
   const handleSend = async () => {
     const content = input.trim();
-    if (!content || sending) return;
+    if (!content || sendingRef.current) return;
+    sendingRef.current = true;
+    const session = apiContext.get().sessionVersion;
 
     const nextMessages: AiMessage[] = [...messages, { role: 'user', content }];
     setMessages(nextMessages);
@@ -87,6 +97,7 @@ export default function AiScreen() {
 
     try {
       const reply = await aiService.chat(nextMessages, getDeviceTimezone());
+      if (session !== apiContext.get().sessionVersion) return;
       const replyIndex = nextMessages.length;
       if (reply.suggestedActivities?.length) {
         setSelectedSuggestions((current) => {
@@ -101,16 +112,22 @@ export default function AiScreen() {
       setMessages([...nextMessages, reply]);
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     } catch (error: any) {
+      if (session !== apiContext.get().sessionVersion) return;
+      setMessages(messages);
+      setInput(content);
       Alert.alert(
         t('ai.failed'),
         getApiErrorMessage(error, t, 'ai.failed'),
       );
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
 
   const handleAddSuggestions = async (message: AiMessage, messageIndex: number) => {
+    if (addingRef.current || addedSuggestionMessages[messageIndex]) return;
+    const session = apiContext.get().sessionVersion;
     const suggestions = message.suggestedActivities ?? [];
     const selected = suggestions.filter((_, suggestionIndex) =>
       selectedSuggestions[suggestionKey(messageIndex, suggestionIndex)]
@@ -121,6 +138,7 @@ export default function AiScreen() {
       return;
     }
 
+    addingRef.current = true;
     setAddingSuggestionsKey(String(messageIndex));
     try {
       const timezone = getDeviceTimezone();
@@ -128,28 +146,19 @@ export default function AiScreen() {
         selected.map((suggestion) => ({ ...suggestion, timezone })),
       );
 
-      try {
-        await Promise.all(
-          result.plannedActivities.map((activity) =>
-            notificationService.scheduleActivityReminder(activity, language),
-          ),
-        );
-      } catch (error) {
-        if (error instanceof Error && error.message === 'notifications.permissionDenied') {
-          Alert.alert(t('common.error'), t('notifications.permissionDenied'));
-        } else {
-          console.error(error);
-        }
-      }
-
+      if (session !== apiContext.get().sessionVersion) return;
       setAddedSuggestionMessages((current) => ({ ...current, [messageIndex]: true }));
-      Alert.alert(t('ai.addedTitle'), t('ai.addedBody', { count: result.plannedActivities.length }));
+      // Committed tasks are usable immediately; OS reminder work is independent.
+      void Promise.all(result.plannedActivities.map((activity) => notificationService.scheduleActivityReminder(activity, language))).catch(() => {
+        if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), t('notifications.permissionDenied'));
+      });
     } catch (error: any) {
       Alert.alert(
         t('common.error'),
         getApiErrorMessage(error, t, 'common.somethingWrong'),
       );
     } finally {
+      addingRef.current = false;
       setAddingSuggestionsKey(null);
     }
   };
@@ -158,9 +167,10 @@ export default function AiScreen() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={88}
+      keyboardVerticalOffset={headerHeight}
     >
       <FlatList
+        keyboardShouldPersistTaps="handled"
         ref={listRef}
         data={messages}
         keyExtractor={(_, index) => String(index)}
@@ -201,7 +211,7 @@ export default function AiScreen() {
                         styles.suggestionCard,
                         selected && styles.suggestionCardSelected,
                       ]}
-                      disabled={Boolean(addedSuggestionMessages[index])}
+                      disabled={Boolean(addedSuggestionMessages[index]) || addingSuggestionsKey !== null}
                       onPress={() => {
                         setSelectedSuggestions((current) => ({
                           ...current,
@@ -226,12 +236,13 @@ export default function AiScreen() {
                 })}
 
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[
                     styles.addSuggestionsButton,
                     (addingSuggestionsKey === String(index) || addedSuggestionMessages[index]) &&
                       styles.addSuggestionsButtonDisabled,
                   ]}
-                  disabled={addingSuggestionsKey === String(index) || addedSuggestionMessages[index]}
+                  disabled={addingSuggestionsKey !== null || addedSuggestionMessages[index]}
                   onPress={() => handleAddSuggestions(item, index)}
                 >
                   {addingSuggestionsKey === String(index) ? (
@@ -242,6 +253,7 @@ export default function AiScreen() {
                     </Text>
                   )}
                 </TouchableOpacity>
+                {addedSuggestionMessages[index] ? <ActionButton label={t('home.allTasks')} variant="secondary" onPress={() => router.navigate('/(tabs)/activities')} style={{ marginTop: 8 }} /> : null}
               </View>
             ) : null}
           </View>
@@ -251,14 +263,18 @@ export default function AiScreen() {
 
       <View style={styles.composer}>
         <TextInput
+          accessibilityLabel={t('ai.placeholder')}
           style={styles.input}
           value={input}
           onChangeText={setInput}
           placeholder={t('ai.placeholder')}
           placeholderTextColor={colors.textMuted}
+          maxLength={4000}
+          editable={!sending}
           multiline
         />
         <TouchableOpacity
+          accessibilityRole="button"
           style={[styles.sendButton, (!input.trim() || sending) && styles.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!input.trim() || sending}
@@ -279,7 +295,7 @@ const createStyles = (theme: AppTheme) => {
 
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  list: { padding: spacing.md, gap: spacing.sm },
+  list: { ...pageContent, gap: spacing.sm },
   emptyList: { flexGrow: 1, justifyContent: 'center' },
   emptyBubble: {
     backgroundColor: colors.surface,
@@ -344,6 +360,7 @@ const createStyles = (theme: AppTheme) => {
   addSuggestionsButtonDisabled: { opacity: 0.65 },
   addSuggestionsText: { ...typography.small, color: colors.textOnPrimary, fontWeight: '600' },
   composer: {
+    width: '100%', maxWidth: 720, alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: spacing.sm,

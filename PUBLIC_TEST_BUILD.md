@@ -11,7 +11,8 @@ The root `render.yaml` defines:
 - `levelup-backend-staging`: Node web service from `levelup-backend`
 - `levelup-postgres-staging`: Render Postgres database
 - build: `npm ci --include=dev && npx prisma generate --generator client && npm run build`
-- pre-deploy: `npx prisma migrate deploy && npx prisma db seed`
+- startup: `npx prisma migrate deploy && npx prisma db seed && npm start`
+- production release/migration procedure: [DEPLOYMENT.md](DEPLOYMENT.md)
 - health check: `/health`
 
 Deploy it from Render Dashboard:
@@ -23,7 +24,7 @@ Deploy it from Render Dashboard:
 5. Fill required secret values:
    - `OPENAI_API_KEY`
    - `PASSWORD_RESET_URL_BASE`, for example `https://levelup-backend-staging.onrender.com/reset-password`
-6. Optional, if real password reset emails should work:
+6. Configure SMTP for functional password recovery:
    - `SMTP_HOST`
    - `SMTP_PORT`
    - `SMTP_SECURE`
@@ -37,14 +38,10 @@ After deploy, verify:
 curl https://YOUR_RENDER_BACKEND_DOMAIN/health
 ```
 
-Render free Postgres is suitable only for short staging. As of Render's current
-docs, free Postgres databases expire after 30 days; use `basic-256mb` or higher
-for persistent testing data.
-
-Avatar uploads currently use the service filesystem under `uploads/`. On a free
-Render web service, uploaded files are ephemeral and can disappear after restart
-or redeploy. This is acceptable for staging smoke tests, but production should
-move avatars to object storage or a paid persistent disk.
+The free staging services are for disposable testing. Provision a persistent database,
+backups and an always-on API before relying on daily data. New avatars are stored
+in PostgreSQL. Existing file avatars need the migration procedure in
+[DEPLOYMENT.md](DEPLOYMENT.md) before their old server files are removed.
 
 ## 2. Configure EAS environment variables
 

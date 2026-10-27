@@ -71,13 +71,14 @@ export function ActivityDetailsModal({ activity, visible, onClose }: Props) {
             <View style={styles.handle} />
             <View style={styles.header}>
               <View style={[styles.iconBadge, { backgroundColor: `${typeColor}1A` }]}>
-                <Text style={styles.iconText}>{activityEmoji[activity.type]}</Text>
+                <Text allowFontScaling={false} style={styles.iconText}>{activityEmoji[activity.type]}</Text>
               </View>
               <View style={styles.headerText}>
-                <Text style={styles.title}>{title}</Text>
+                <Text style={styles.title}>{t('tabs.activityHistory')}</Text>
                 <Text style={styles.subtitle}>{activityLabel(activity.type)}</Text>
               </View>
               <TouchableOpacity
+                accessibilityRole="button" accessibilityLabel={t('common.close')}
                 style={styles.closeButton}
                 onPress={onClose}
                 hitSlop={8}
@@ -92,6 +93,7 @@ export function ActivityDetailsModal({ activity, visible, onClose }: Props) {
               contentContainerStyle={styles.contentInner}
               showsVerticalScrollIndicator={false}
             >
+              <Text style={[styles.title, { marginBottom: 16 }]}>{title}</Text>
               <View style={styles.detailsGrid}>
                 <View style={styles.detailItem}>
                   <Text style={styles.detailLabel}>{t('activities.type')}</Text>
@@ -133,12 +135,12 @@ const createStyles = (theme: AppTheme) => {
       backgroundColor: colors.modalOverlay,
     },
     sheet: {
-      maxHeight: '82%',
+      maxHeight: '82%', width: '100%', maxWidth: 720, alignSelf: 'center',
       backgroundColor: colors.surface,
       borderTopLeftRadius: borderRadius.xl,
       borderTopRightRadius: borderRadius.xl,
       paddingTop: spacing.sm,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.md,
       paddingBottom: spacing.xl,
     },
     handle: {
@@ -179,8 +181,8 @@ const createStyles = (theme: AppTheme) => {
       marginTop: 2,
     },
     closeButton: {
-      width: 34,
-      height: 34,
+      width: 44,
+      height: 44,
       marginTop: -4,
       marginRight: -8,
       alignItems: 'center',
@@ -188,7 +190,7 @@ const createStyles = (theme: AppTheme) => {
       borderRadius: borderRadius.full,
     },
     content: {
-      maxHeight: 360,
+      flexShrink: 1,
     },
     contentInner: {
       paddingBottom: spacing.sm,
@@ -214,7 +216,7 @@ const createStyles = (theme: AppTheme) => {
       color: colors.textPrimary,
     },
     xpValue: {
-      color: colors.xpGold,
+      color: colors.xpText,
     },
     descriptionBlock: {
       marginTop: spacing.md,

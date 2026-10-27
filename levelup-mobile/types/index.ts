@@ -70,6 +70,7 @@ export interface PlannedActivityInput {
 
 export interface PlannedActivityUpdateInput extends Partial<PlannedActivityInput> {
   status?: 'ACTIVE' | 'DISABLED';
+  updatedAt?: string;
 }
 
 export interface SuggestedActivity extends PlannedActivityInput {
@@ -140,6 +141,8 @@ export interface Recommendation {
 export interface ActivityResult {
   activity: Activity;
   xpGained: number;
+  totalXp?: number;
+  achievementXpGained?: number;
   xpBreakdown: {
     baseXp: number;
     streakDays: number;

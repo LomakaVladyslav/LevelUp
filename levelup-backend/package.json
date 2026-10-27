@@ -9,10 +9,14 @@
     "pretest": "npm run generate",
     "test": "node --test -r ts-node/register src/**/*.test.ts",
     "start": "node dist/index.js",
-    "seed": "ts-node-dev --transpile-only prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "test:db": "node scripts/test-db.cjs",
+    "lint": "eslint . --max-warnings 0",
+    "audit:data": "node scripts/audit-data.cjs",
+    "migrate:avatars": "node scripts/migrate-avatars.cjs"
   },
   "prisma": {
-    "seed": "ts-node-dev --transpile-only prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -34,14 +38,20 @@
     "@types/node": "^20.10.0",
     "@types/nodemailer": "^8.0.1",
     "@types/supertest": "^6.0.3",
+    "eslint": "^10.10.0",
     "prisma": "^5.22.0",
     "supertest": "^7.2.2",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.69.0"
   },
   "description": "",
   "main": "index.js",
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "overrides": {
+    "qs": "^6.16.0"
+  }
 }

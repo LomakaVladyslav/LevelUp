@@ -6,7 +6,7 @@ type PasswordResetEmail = {
   resetUrl: string;
 };
 
-const isSmtpConfigured = () =>
+export const isSmtpConfigured = () =>
   Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
 
 const escapeHtml = (value: string): string =>
@@ -21,6 +21,9 @@ const createTransporter = () =>
   nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 8000,
     secure: process.env.SMTP_SECURE === 'true',
     auth:
       process.env.SMTP_USER && process.env.SMTP_PASS
@@ -37,10 +40,7 @@ export const sendPasswordResetEmail = async ({
   resetUrl,
 }: PasswordResetEmail): Promise<void> => {
   if (!isSmtpConfigured()) {
-    console.warn(
-      `SMTP is not configured. Password reset link for ${to}: ${resetUrl}`,
-    );
-    return;
+    throw new Error('SMTP is not configured');
   }
 
   await createTransporter().sendMail({

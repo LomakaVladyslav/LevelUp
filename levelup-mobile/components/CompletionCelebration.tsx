@@ -4,6 +4,7 @@ import {
   StyleSheet,
   useWindowDimensions,
   View,
+  Text,
 } from 'react-native';
 import Animated, {
   clamp,
@@ -13,6 +14,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
+import { useT } from '../hooks/useT';
 import { AppTheme } from '../constants/theme';
 import { useTheme } from '../hooks/useTheme';
 
@@ -23,6 +25,8 @@ export type CompletionCelebrationVariant =
 
 export type CompletionCelebrationData = {
   variant: CompletionCelebrationVariant;
+  xpGained?: number;
+  newLevel?: number;
 };
 
 type CompletionCelebrationProps = {
@@ -150,6 +154,7 @@ export function CompletionCelebration({
   autoDismissMs = DEFAULT_AUTO_DISMISS_MS,
 }: CompletionCelebrationProps) {
   const theme = useTheme();
+  const t = useT();
   const { colors, activityColor } = theme;
   const { width, height } = useWindowDimensions();
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -225,6 +230,10 @@ export function CompletionCelebration({
       style={styles.celebrationLayer}
       testID="completion-celebration"
     >
+      <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 24, right: 24, top: 24, padding: 16, borderRadius: 16, backgroundColor: colors.surface, borderColor: colors.successBorder, borderWidth: 1 }}>
+        <Text style={{ color: colors.textPrimary, fontWeight: '700', textAlign: 'center' }}>{t('activities.completedTitle')}</Text>
+        {data.xpGained !== undefined ? <Text style={{ color: colors.xpText, textAlign: 'center', marginTop: 4 }}>+{data.xpGained} XP{data.variant === 'levelUp' && data.newLevel ? ` · ${t('home.level')} ${data.newLevel}` : ''}</Text> : null}
+      </View>
       {!reduceMotion
         ? particles.map((particle) => (
             <CelebrationParticle

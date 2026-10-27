@@ -2,10 +2,12 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import type { Prisma, User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import prisma from '../utils/prisma';
+import { withUserLock } from '../services/user-mutation.service';
+import { HttpError, sendError } from '../utils/http-error';
 import { avatarUrlForFile, deleteAvatarFile } from '../utils/avatar';
-import { sendPasswordResetEmail } from '../services/mail.service';
+import { sendPasswordResetEmail, isSmtpConfigured } from '../services/mail.service';
 
 type PublicUser = Pick<
   User,
@@ -56,6 +58,7 @@ const parseOptionalAge = (value: unknown): number | null => {
     return null;
   }
 
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+$/.test(value))) throw new Error('Age must be a whole number between 1 and 120');
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 120) {
     throw new Error('Age must be a whole number between 1 and 120');
@@ -65,7 +68,7 @@ const parseOptionalAge = (value: unknown): number | null => {
 };
 
 const cleanupUploadedAvatar = (file?: Express.Multer.File): void => {
-  if (file) {
+  if (file?.filename) {
     deleteAvatarFile(avatarUrlForFile(file.filename));
   }
 };
@@ -107,8 +110,7 @@ export const availability = async (
       ...(username ? { usernameAvailable: !usernameUser } : {}),
     });
   } catch (error) {
-    console.error('Availability error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -119,6 +121,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const username = normalizeUsername(req.body.username);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
 
+    if (username.length > 50) {
+      cleanupUploadedAvatar(req.file);
+      res.status(400).json({ error: 'Username must contain at most 50 characters' });
+      return;
+    }
     if (!email || !username || !password) {
       cleanupUploadedAvatar(req.file);
       res.status(400).json({
@@ -128,12 +135,18 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (!isValidEmail(email)) {
+    if (email.length > 254 || !isValidEmail(email)) {
       cleanupUploadedAvatar(req.file);
       res.status(400).json({
         error: 'Email is invalid',
         errorCode: 'AUTH_EMAIL_INVALID',
       });
+      return;
+    }
+
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      cleanupUploadedAvatar(req.file);
+      res.status(400).json({ error: 'Password must be at most 72 UTF-8 bytes', errorCode: 'AUTH_PASSWORD_LONG' });
       return;
     }
 
@@ -184,14 +197,18 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Hash password — never store plain text passwords
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const avatarUrl = req.file ? avatarUrlForFile(req.file.filename) : null;
-
-    const user = await prisma.user.create({
-      data: { email, username, passwordHash, age, avatarUrl },
+    const avatarId = req.file ? crypto.randomUUID() : null;
+    const avatarUrl = avatarId ? `/api/avatars/${avatarId}` : null;
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({ data: { email, username, passwordHash, age, avatarUrl } });
+      if (req.file && avatarId) await tx.avatar.create({ data: {
+        id: avatarId, userId: created.id, data: req.file.buffer, contentType: req.file.mimetype,
+      } });
+      return created;
     });
 
     // Create a token valid for 30 days
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET!, {
+    const token = jwt.sign({ userId: user.id, sessionVersion: user.sessionVersion }, process.env.JWT_SECRET!, {
       expiresIn: '30d',
     });
 
@@ -201,8 +218,12 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     cleanupUploadedAvatar(req.file);
-    console.error('Register error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const field = String(error.meta?.target ?? '').includes('email') ? 'EMAIL' : 'USERNAME';
+      res.status(409).json({ error: 'Account already exists', errorCode: `AUTH_${field}_IN_USE` });
+      return;
+    }
+    sendError(res, error);
   }
 };
 
@@ -240,7 +261,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET!, {
+    const token = jwt.sign({ userId: user.id, sessionVersion: user.sessionVersion }, process.env.JWT_SECRET!, {
       expiresIn: '30d',
     });
 
@@ -249,8 +270,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       user: toPublicUser(user),
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -270,11 +290,16 @@ export const forgotPassword = async (
       return;
     }
 
-    if (!isValidEmail(email)) {
+    if (email.length > 254 || !isValidEmail(email)) {
       res.status(400).json({
         error: 'Email is invalid',
         errorCode: 'AUTH_EMAIL_INVALID',
       });
+      return;
+    }
+
+    if (!isSmtpConfigured()) {
+      res.status(503).json({ error: 'Password reset email is temporarily unavailable', errorCode: 'AUTH_RESET_EMAIL_FAILED' });
       return;
     }
 
@@ -302,14 +327,15 @@ export const forgotPassword = async (
           resetUrl: createPasswordResetUrl(token),
         });
       } catch (error) {
-        console.error('Password reset email error:', error);
+        console.error('Password reset email delivery failed');
+        res.status(503).json({ error: 'Could not send password reset email', errorCode: 'AUTH_RESET_EMAIL_FAILED' });
+        return;
       }
     }
 
     res.json(resetRequestResponse);
   } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -327,6 +353,12 @@ export const resetPassword = async (
         error: 'Token and password are required',
         errorCode: 'AUTH_RESET_TOKEN_PASSWORD_REQUIRED',
       });
+      return;
+    }
+
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      cleanupUploadedAvatar(req.file);
+      res.status(400).json({ error: 'Password must be at most 72 UTF-8 bytes', errorCode: 'AUTH_PASSWORD_LONG' });
       return;
     }
 
@@ -362,10 +394,15 @@ export const resetPassword = async (
     const passwordHash = await bcrypt.hash(password, 12);
     const usedAt = new Date();
 
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await withUserLock(resetToken.userId, async (tx) => {
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { id: resetToken.id, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt },
+      });
+      if (claimed.count !== 1) throw new HttpError(400, 'Password reset token is invalid', 'AUTH_RESET_TOKEN_INVALID');
       await tx.user.update({
         where: { id: resetToken.userId },
-        data: { passwordHash },
+        data: { passwordHash, sessionVersion: { increment: 1 } },
       });
       await tx.passwordResetToken.updateMany({
         where: {
@@ -379,8 +416,7 @@ export const resetPassword = async (
 
     res.json({ message: 'Password has been reset.' });
   } catch (error) {
-    console.error('Reset password error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -408,7 +444,7 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
 
     res.json({ user });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -426,14 +462,14 @@ export const updateMe = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await prisma.user.update({
+    const user = await withUserLock(req.user.id, (tx) => tx.user.update({
       where: { id: req.user.id },
-      data: { age },
-    });
+      data: req.body.age === undefined ? {} : { age },
+    }), req.user.sessionVersion);
 
     res.json({ user: toPublicUser(user) });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
@@ -448,45 +484,38 @@ export const updateAvatar = async (
       return;
     }
 
-    const existing = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
-
-    if (!existing) {
-      cleanupUploadedAvatar(req.file);
-      res.status(404).json({ error: 'User not found' });
-      return;
-    }
-
-    const user = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { avatarUrl: avatarUrlForFile(req.file.filename) },
-    });
-
-    deleteAvatarFile(existing.avatarUrl);
+    const { user, previousUrl } = await withUserLock(req.user.id, async (tx) => {
+      const existing = await tx.user.findUniqueOrThrow({ where: { id: req.user.id } });
+      const id = crypto.randomUUID();
+      await tx.avatar.upsert({
+        where: { userId: req.user.id },
+        create: { id, userId: req.user.id, data: req.file!.buffer, contentType: req.file!.mimetype },
+        update: { id, data: req.file!.buffer, contentType: req.file!.mimetype },
+      });
+      const user = await tx.user.update({ where: { id: req.user.id }, data: { avatarUrl: `/api/avatars/${id}` } });
+      return { user, previousUrl: existing.avatarUrl };
+    }, req.user.sessionVersion);
+    deleteAvatarFile(previousUrl);
 
     res.json({ user: toPublicUser(user) });
   } catch (error) {
     cleanupUploadedAvatar(req.file);
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };
 
 // DELETE /api/auth/me
 export const deleteMe = async (req: Request, res: Response): Promise<void> => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-
-    if (!user) {
-      res.status(404).json({ error: 'User not found' });
-      return;
-    }
-
-    await prisma.user.delete({ where: { id: req.user.id } });
+    const user = await withUserLock(req.user.id, async (tx) => {
+      const existing = await tx.user.findUniqueOrThrow({ where: { id: req.user.id } });
+      await tx.user.delete({ where: { id: req.user.id } });
+      return existing;
+    }, req.user.sessionVersion);
     deleteAvatarFile(user.avatarUrl);
 
     res.json({ message: 'Account deleted' });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    sendError(res, error);
   }
 };

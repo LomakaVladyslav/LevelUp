@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { ErrorRequestHandler } from 'express';
+import prisma from './utils/prisma';
 import cors from 'cors';
 import path from 'path';
 
@@ -15,6 +16,8 @@ import { uploadsRoot } from './utils/avatar';
 import { requestMetrics } from './middleware/request-metrics.middleware';
 
 const app = express();
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY_HOPS) app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS));
 const PORT = process.env.PORT || 3000;
 const PASSWORD_RESET_APP_URL_BASE =
   process.env.PASSWORD_RESET_APP_URL_BASE || 'levelup://auth/reset-password';
@@ -34,19 +37,33 @@ const createPasswordResetAppUrl = (token: string): string => {
 
 // Middleware — runs on every request
 app.use(cors());                    // Allow requests from the mobile app
-app.use(express.json());            // Parse JSON request bodies
+app.use(express.json({ limit: '64kb' }));            // Parse JSON request bodies
+app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
 app.use('/uploads', express.static(path.resolve(uploadsRoot)));
 app.use(requestMetrics);
 
 // Health check — useful for deployment monitoring
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch { res.status(503).json({ status: 'unavailable' }); }
+});
+
+app.get('/api/avatars/:id', async (req, res) => {
+  try {
+    const avatar = await prisma.avatar.findUnique({ where: { id: req.params.id } });
+    if (!avatar) { res.sendStatus(404); return; }
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.type(avatar.contentType).send(Buffer.from(avatar.data));
+  } catch { res.status(503).json({ error: 'Image temporarily unavailable' }); }
 });
 
 app.get('/reset-password', (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
 
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
 
   if (!token) {
     res.status(400).type('html').send(
@@ -103,10 +120,23 @@ app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
 });
 
+const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+  const status = error?.type === 'entity.too.large' ? 413 : error instanceof SyntaxError ? 400 : 500;
+  res.status(status).json({ error: status === 500 ? 'Internal server error' : 'Invalid request body' });
+};
+app.use(errorHandler);
+
 if (require.main === module) {
-  app.listen(PORT, () => {
+  if (!process.env.DATABASE_URL || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('Configure DATABASE_URL and JWT_SECRET (at least 32 characters) before starting.');
+  }
+  const server = app.listen(PORT, () => {
     console.log(`LevelUp backend running on http://localhost:${PORT}`);
     console.log(`   Health check: http://localhost:${PORT}/health`);
+  });
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => {
+    server.close(() => { void prisma.$disconnect().finally(() => process.exit(0)); });
+    setTimeout(() => process.exit(1), 15000).unref();
   });
 }
 

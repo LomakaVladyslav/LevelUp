@@ -1,4 +1,4 @@
-import prisma from '../utils/prisma';
+import { Prisma } from '@prisma/client';
 import { levelFromXp } from '../utils/constants';
 import { awardXP } from './xp.service';
 import { localizeAchievement } from './achievement-localization.service';
@@ -53,7 +53,8 @@ export const isAchievementConditionMet = (
 
 export async function checkAndUnlockAchievements(
   userId: string,
-  locale: SupportedLocale = 'en',
+  locale: SupportedLocale,
+  db: Prisma.TransactionClient,
 ): Promise<Achievement[]> {
   const [
     allAchievements,
@@ -62,27 +63,27 @@ export async function checkAndUnlockAchievements(
     streak,
     user,
   ] = await Promise.all([
-    prisma.achievement.findMany({
+    db.achievement.findMany({
       include: {
         translations: {
           where: { locale: { in: [locale, 'en'] } },
         },
       },
     }),
-    prisma.userAchievement.findMany({
+    db.userAchievement.findMany({
       where: { userId },
       select: { achievementId: true },
     }),
-    prisma.activity.groupBy({
+    db.activity.groupBy({
       by: ['type'],
       where: { userId },
       _count: { _all: true },
     }),
-    prisma.streak.findUnique({
+    db.streak.findUnique({
       where: { userId_type: { userId, type: 'daily' } },
       select: { currentCount: true },
     }),
-    prisma.user.findUnique({
+    db.user.findUnique({
       where: { id: userId },
       select: { level: true, xp: true },
     }),
@@ -124,7 +125,7 @@ export async function checkAndUnlockAchievements(
         continue;
       }
 
-      const result = await prisma.userAchievement.createMany({
+      const result = await db.userAchievement.createMany({
         data: [{ userId, achievementId: achievement.id }],
         skipDuplicates: true,
       });
@@ -133,7 +134,7 @@ export async function checkAndUnlockAchievements(
       if (result.count === 0) continue;
 
       if (achievement.xpReward > 0) {
-        await awardXP(userId, achievement.xpReward, 'achievement_unlocked');
+        await awardXP(userId, achievement.xpReward, 'achievement_unlocked', db);
         metrics.totalXp += achievement.xpReward;
         metrics.level = levelFromXp(metrics.totalXp);
       }

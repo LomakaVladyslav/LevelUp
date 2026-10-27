@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
+import { AuthFrame } from '../../components/AuthFrame';
+import { ActionButton } from '../../components/ScreenUi';
+import { useAuthStore } from '../../stores/auth.store';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { authService } from '../../services/auth.service';
@@ -28,8 +27,12 @@ export default function ResetPasswordScreen() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleSubmit = async () => {
+    if (pending.current) return;
     setError('');
 
     if (!token) {
@@ -47,85 +50,74 @@ export default function ResetPasswordScreen() {
       return;
     }
 
+    pending.current = true;
     setLoading(true);
     try {
       await authService.resetPassword(token, password);
+      await useAuthStore.getState().logout();
       setSuccess(true);
     } catch (submitError: any) {
       setError(
         getApiErrorMessage(submitError, t, 'common.somethingWrong'),
       );
     } finally {
-      setLoading(false);
+      pending.current = false;
+      if (mounted.current) setLoading(false);
     }
   };
 
   if (success) {
     return (
-      <View style={styles.container}>
-        <View style={styles.inner}>
-          <Text style={styles.title}>{t('resetPassword.successTitle')}</Text>
-          <Text style={styles.subtitle}>{t('resetPassword.successBody')}</Text>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => router.replace('/auth/login')}
-          >
-            <Text style={styles.buttonText}>{t('forgotPassword.backToLogin')}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      <AuthFrame>
+        <Text style={styles.title}>{t('resetPassword.successTitle')}</Text>
+        <Text style={styles.subtitle}>{t('resetPassword.successBody')}</Text>
+        <ActionButton label={t('forgotPassword.backToLogin')} onPress={() => router.replace('/auth/login')} />
+      </AuthFrame>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <View style={styles.inner}>
+    <AuthFrame>
         <Text style={styles.title}>{t('resetPassword.title')}</Text>
         <Text style={styles.subtitle}>{t('resetPassword.subtitle')}</Text>
 
         <TextInput
           style={[styles.input, error ? styles.inputError : null]}
+          accessibilityLabel={t('resetPassword.newPassword')}
           placeholder={t('resetPassword.newPassword')}
+          editable={!loading}
           value={password}
           onChangeText={(value) => {
             setPassword(value);
             setError('');
           }}
+          autoComplete="new-password" textContentType="newPassword"
           secureTextEntry
           placeholderTextColor={colors.textMuted}
         />
         <TextInput
           style={[styles.input, error ? styles.inputError : null]}
+          accessibilityLabel={t('resetPassword.confirmPassword')}
           placeholder={t('resetPassword.confirmPassword')}
+          editable={!loading}
           value={confirmPassword}
           onChangeText={(value) => {
             setConfirmPassword(value);
             setError('');
           }}
+          autoComplete="new-password" textContentType="newPassword"
           secureTextEntry
           placeholderTextColor={colors.textMuted}
         />
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSubmit}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>
-            {loading ? t('resetPassword.loading') : t('resetPassword.button')}
-          </Text>
-        </TouchableOpacity>
+        <ActionButton label={t(loading ? 'resetPassword.loading' : 'resetPassword.button')} loading={loading} onPress={handleSubmit} />
 
-        <Link href="/auth/login" style={styles.link}>
+        <Link replace href="/auth/login" style={styles.link}>
           {t('forgotPassword.backToLogin')}
         </Link>
-      </View>
-    </KeyboardAvoidingView>
+    </AuthFrame>
   );
 }
 
@@ -141,13 +133,13 @@ const createStyles = (theme: AppTheme) => {
     },
     title: {
       ...typography.h1,
-      textAlign: 'center',
-      color: colors.primary,
+      textAlign: 'left',
+      color: colors.textPrimary,
       marginBottom: spacing.xs,
     },
     subtitle: {
       ...typography.small,
-      textAlign: 'center',
+      textAlign: 'left',
       color: colors.textSecondary,
       marginBottom: spacing.xl,
     },
@@ -179,11 +171,12 @@ const createStyles = (theme: AppTheme) => {
       color: colors.textOnPrimary,
       ...typography.bodyBold,
     },
-    link: {
-      marginTop: spacing.lg,
-      textAlign: 'center',
-      color: colors.primary,
-      ...typography.small,
+  link: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.md,
+    textAlign: 'center',
+    color: colors.primary,
+    ...typography.body,
     },
   });
 };

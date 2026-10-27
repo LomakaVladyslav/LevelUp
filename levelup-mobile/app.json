@@ -17,20 +17,20 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow LevelUp to access your photos so you can choose an avatar."
+          "photosPermission": "Allow LevelUp to access your photos so you can choose an avatar.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-secure-store"
     ],
     "android": {
       "package": "com.vladyslav.levelup",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6C47FF"
-      },
-      "permissions": [
-        "android.permission.RECORD_AUDIO"
-      ]
+      }
     },
     "ios": {
       "bundleIdentifier": "com.vladyslav.levelup",

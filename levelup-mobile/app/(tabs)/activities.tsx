@@ -1,5 +1,15 @@
+import { EmptyState, pageContent } from '../../components/ScreenUi';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { completePlannedActivity } from '../../services/complete-planned-activity';
+import { orderTasks } from '../../utils/task-order';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useScreenResource } from '../../hooks/useScreenResource';
+import { ResourceError } from '../../components/ResourceError';
+import { apiContext } from '../../services/api-context';
+import { getApiErrorMessage } from '../../utils/api-error';
 import type { ComponentRef } from 'react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,10 +25,11 @@ import {
   Platform,
   Pressable,
   useWindowDimensions,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
 import { plannedActivityService } from '../../services/plannedActivity.service';
 import { notificationService } from '../../services/notification.service';
 import {
@@ -131,15 +142,24 @@ const dateToMinutes = (date: Date | null) =>
 
 export default function ActivitiesScreen() {
   const t = useT();
+  const router = useRouter();
+  const { create } = useLocalSearchParams<{ create?: string }>();
+  const consumedCreate = useRef(false);
   const theme = useTheme();
   const { colors, activityColor } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
+  const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>([]);
-  const [todayProgress, setTodayProgress] = useState<TodayProgress>(
-    EMPTY_TODAY_PROGRESS,
-  );
+  const { data, setData, error, loading, refreshing, reload: loadActivities } = useScreenResource(() => plannedActivityService.getAll(true));
+  const [showPaused, setShowPaused] = useState(false);
+  const plannedActivities = useMemo(() => orderTasks((data?.plannedActivities ?? []).filter((activity) => activity.status === (showPaused ? 'DISABLED' : 'ACTIVE'))), [data, showPaused]);
+  const todayProgress = data?.todayProgress ?? EMPTY_TODAY_PROGRESS;
+  const submittingRef = useRef(false);
+  const mutationRef = useRef(false);
+  const userId = useAuthStore((state) => state.user?.id);
+  const draftKey = `activityDraft:${userId}`;
+  const draftQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [modalVisible, setModalVisible] = useState(false);
   const [editingActivity, setEditingActivity] = useState<PlannedActivity | null>(null);
   const [selectedType, setSelectedType] = useState<ActivityType>('STUDY');
@@ -149,18 +169,17 @@ export default function ActivitiesScreen() {
   const [dueDate, setDueDate] = useState<Date | null>(null);
   const [dueTime, setDueTime] = useState<Date | null>(null);
   const [pickerMode, setPickerMode] = useState<PickerMode>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completionCelebration, setCompletionCelebration] =
     useState<CompletionCelebrationData | null>(null);
   const [menuActivity, setMenuActivity] = useState<PlannedActivity | null>(null);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+  const pendingMenuAction = useRef<(() => void) | null>(null);
+  useEffect(() => () => { pendingMenuAction.current = null; }, []);
   const menuButtonRefs = useRef<
     Record<string, ComponentRef<typeof View> | null>
   >({});
-  const refreshUser = useAuthStore((s) => s.refreshUser);
 
   const activityTypes: { type: ActivityType; label: string }[] = [
     { type: 'STUDY', label: `${activityEmoji.STUDY} ${t('activity.study')}` },
@@ -211,26 +230,14 @@ export default function ActivitiesScreen() {
       : '';
   };
 
-  const loadActivities = useCallback(async () => {
-    try {
-      const data = await plannedActivityService.getAll();
-      setPlannedActivities(data.plannedActivities);
-      setTodayProgress(data.todayProgress ?? EMPTY_TODAY_PROGRESS);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [language]);
+  useEffect(() => {
+    if (!modalVisible || editingActivity || !userId || submitting) return;
+    const draft = { title, description, selectedType, scheduleType, dueDate: dueDate?.toISOString(), dueTime: dueTime?.toISOString() };
+    // Queue every draft snapshot immediately; closing or backgrounding cannot cancel the latest text.
+    draftQueue.current = draftQueue.current.then(() => AsyncStorage.setItem(draftKey, JSON.stringify(draft))).catch(() => undefined);
+  }, [modalVisible, editingActivity, userId, submitting, title, description, selectedType, scheduleType, dueDate, dueTime, draftKey]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadActivities();
-    }, [loadActivities])
-  );
-
-  const resetForm = (activity?: PlannedActivity) => {
+  const resetForm = useCallback((activity?: PlannedActivity) => {
     setEditingActivity(activity ?? null);
     setSelectedType(activity?.type ?? 'STUDY');
     setScheduleType(activity?.scheduleType ?? 'SIMPLE');
@@ -239,16 +246,64 @@ export default function ActivitiesScreen() {
     setDueDate(activity?.dueDate ? parseStoredDate(activity.dueDate) : null);
     setDueTime(minutesToDate(activity?.dueTimeMinutes));
     setPickerMode(null);
-  };
+  }, []);
 
   const closeActionsMenu = () => {
     setMenuActivity(null);
     setMenuPosition(null);
   };
 
-  const openCreateModal = () => {
+  const openCreateModal = useCallback(async () => {
     resetForm();
-    setModalVisible(true);
+    const session = apiContext.get().sessionVersion;
+    try {
+      await draftQueue.current;
+      const value = await AsyncStorage.getItem(draftKey);
+      const draft = value ? JSON.parse(value) : null;
+      if (session !== apiContext.get().sessionVersion) return;
+      if (draft && typeof draft.title === 'string' && typeof draft.description === 'string') {
+        setTitle(draft.title); setDescription(draft.description);
+        if (['STUDY', 'WORKOUT', 'HABIT', 'CUSTOM'].includes(draft.selectedType)) setSelectedType(draft.selectedType);
+        if (['SIMPLE', 'DAILY', 'DATE'].includes(draft.scheduleType)) setScheduleType(draft.scheduleType);
+        if (draft.dueDate && Number.isFinite(Date.parse(draft.dueDate))) setDueDate(new Date(draft.dueDate));
+        if (draft.dueTime && Number.isFinite(Date.parse(draft.dueTime))) setDueTime(new Date(draft.dueTime));
+      }
+    } catch { /* A corrupt draft must not block creating an activity. */ }
+    if (session === apiContext.get().sessionVersion) setModalVisible(true);
+  }, [draftKey, resetForm]);
+
+  useEffect(() => {
+    if (create !== '1') { consumedCreate.current = false; return; }
+    if (consumedCreate.current) return;
+    consumedCreate.current = true;
+    router.setParams({ create: undefined });
+    setShowPaused(false);
+    void openCreateModal();
+  }, [create, router, openCreateModal]);
+
+  const finishMenuDismiss = () => {
+    const action = pendingMenuAction.current;
+    pendingMenuAction.current = null;
+    action?.();
+  };
+
+  const runMenuAction = (action: () => void) => {
+    const session = apiContext.get().sessionVersion;
+    const guardedAction = () => { if (session === apiContext.get().sessionVersion) action(); };
+    // iOS cannot safely present another sheet/alert while this modal is dismissing.
+    if (Platform.OS === 'ios' && menuActivity && menuPosition) {
+      pendingMenuAction.current = guardedAction;
+      closeActionsMenu();
+    } else {
+      closeActionsMenu();
+      guardedAction();
+    }
+  };
+
+  const closeForm = () => {
+    if (submittingRef.current) return;
+    Keyboard.dismiss();
+    setModalVisible(false);
   };
 
   const openEditModal = (activity: PlannedActivity) => {
@@ -289,6 +344,7 @@ export default function ActivitiesScreen() {
   };
 
   const handleSave = async () => {
+    if (submittingRef.current) return;
     if (!title.trim()) {
       Alert.alert(t('common.error'), t('activities.titleRequired'));
       return;
@@ -309,65 +365,87 @@ export default function ActivitiesScreen() {
       timezone: getDeviceTimezone(),
     };
 
+    Keyboard.dismiss();
+    submittingRef.current = true;
     setSubmitting(true);
+    const session = apiContext.get().sessionVersion;
     try {
       const result = editingActivity
-        ? await plannedActivityService.update(editingActivity.id, payload)
+        ? await plannedActivityService.update(editingActivity.id, { ...payload, timezone: editingActivity.timezone, updatedAt: editingActivity.updatedAt })
         : await plannedActivityService.create(payload);
 
-      try {
-        await notificationService.rescheduleActivityReminder(result.plannedActivity, language);
-      } catch (error) {
-        handleNotificationError(error);
-      }
-
+      if (session !== apiContext.get().sessionVersion) return;
+      setData((current) => ({
+        plannedActivities: [result.plannedActivity, ...(current?.plannedActivities ?? []).filter((activity) => activity.id !== result.plannedActivity.id)],
+        todayProgress: current?.todayProgress ?? EMPTY_TODAY_PROGRESS,
+      }));
       setModalVisible(false);
+      if (!editingActivity) {
+        setShowPaused(false);
+        draftQueue.current = draftQueue.current.then(() => AsyncStorage.removeItem(draftKey)).catch(() => undefined);
+      }
       resetForm();
-      await loadActivities();
+      void loadActivities();
+      void notificationService.rescheduleActivityReminder(result.plannedActivity, language).catch(handleNotificationError);
     } catch (e: any) {
-      Alert.alert(t('common.error'), e.response?.data?.error || t('activities.saveFailed'));
+      if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(e, t, 'activities.saveFailed'));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const showCompletionResult = async (activity: PlannedActivity, result: Awaited<ReturnType<typeof plannedActivityService.complete>>) => {
+  const handleComplete = async (activity: PlannedActivity) => {
+    if (mutationRef.current || (activity.scheduleType === 'DAILY' && activity.isCompletedToday)) return;
+    mutationRef.current = true;
+    setCompletingId(activity.id);
+    const session = apiContext.get().sessionVersion;
     try {
-      await refreshUser();
-    } catch (error) {
-      console.error(error);
-    }
-
-    if (activity.scheduleType !== 'DAILY') {
-      await notificationService.cancelActivityReminder(activity.id);
-    }
-
-    const variant: CompletionCelebrationData['variant'] = result.levelUp
-      ? 'levelUp'
-      : result.newAchievements.length > 0
-        ? 'achievement'
-        : 'completed';
-
-    setCompletionCelebration({ variant });
+      const result = await completePlannedActivity(activity);
+      if (session !== apiContext.get().sessionVersion) return;
+      setData((current) => ({
+        plannedActivities: (current?.plannedActivities ?? []).map((item) => item.id !== activity.id ? item : {
+          ...item, isCompletedToday: true, completedTodayAt: result.activity.completedAt,
+          status: item.scheduleType === 'DAILY' ? 'ACTIVE' : 'COMPLETED',
+        }),
+        todayProgress: current?.todayProgress ?? EMPTY_TODAY_PROGRESS,
+      }));
+      setCompletionCelebration({ variant: result.levelUp ? 'levelUp' : result.newAchievements.length ? 'achievement' : 'completed', xpGained: result.xpGained + (result.achievementXpGained ?? 0), newLevel: result.newLevel });
+      void loadActivities();
+    } catch (e: any) {
+      if (session === apiContext.get().sessionVersion) {
+        Alert.alert(t('common.error'), getApiErrorMessage(e, t, 'activities.completeFailed'));
+        if (e.response?.status === 409) void loadActivities();
+      }
+    } finally { mutationRef.current = false; setCompletingId(null); }
   };
 
-  const handleComplete = async (activity: PlannedActivity) => {
-    if (activity.scheduleType === 'DAILY' && activity.isCompletedToday) return;
+  const removeVisibleActivity = (id: string, status?: PlannedActivity['status']) => {
+    setData((current) => ({
+      plannedActivities: status ? (current?.plannedActivities ?? []).map((item) => item.id === id ? { ...item, status } : item) : (current?.plannedActivities ?? []).filter((item) => item.id !== id),
+      todayProgress: current?.todayProgress ?? EMPTY_TODAY_PROGRESS,
+    }));
+  };
 
+  const handleResume = async (activity: PlannedActivity) => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
     setCompletingId(activity.id);
+    const session = apiContext.get().sessionVersion;
     try {
-      const result = await plannedActivityService.complete(activity.id);
-      await showCompletionResult(activity, result);
-      await loadActivities();
-    } catch (e: any) {
-      Alert.alert(t('common.error'), e.response?.data?.error || t('activities.completeFailed'));
-    } finally {
-      setCompletingId(null);
-    }
+      const result = await plannedActivityService.update(activity.id, { status: 'ACTIVE', updatedAt: activity.updatedAt });
+      if (session !== apiContext.get().sessionVersion) return;
+      removeVisibleActivity(activity.id, 'ACTIVE');
+      void loadActivities();
+      void notificationService.rescheduleActivityReminder(result.plannedActivity, language).catch(handleNotificationError);
+    } catch (failure) { if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(failure, t, 'common.somethingWrong')); }
+    finally { mutationRef.current = false; setCompletingId(null); }
   };
 
   const handleDelete = (activity: PlannedActivity) => {
+    if (mutationRef.current) return;
     closeActionsMenu();
+    const session = apiContext.get().sessionVersion;
     Alert.alert(
       t('activities.deleteTitle'),
       t('activities.deleteConfirm'),
@@ -378,13 +456,17 @@ export default function ActivitiesScreen() {
           style: 'destructive',
           onPress: () => {
             void (async () => {
+              if (mutationRef.current || session !== apiContext.get().sessionVersion) return;
+              mutationRef.current = true;
               try {
                 await plannedActivityService.delete(activity.id);
-                await notificationService.cancelActivityReminder(activity.id);
-                await loadActivities();
+                if (session !== apiContext.get().sessionVersion) return;
+                removeVisibleActivity(activity.id);
+                void loadActivities();
+                void notificationService.cancelActivityReminder(activity.id).catch(handleNotificationError);
               } catch (e: any) {
-                Alert.alert(t('common.error'), e.response?.data?.error || t('activities.deleteFailed'));
-              }
+                if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(e, t, 'activities.deleteFailed'));
+              } finally { mutationRef.current = false; }
             })();
           },
         },
@@ -393,7 +475,9 @@ export default function ActivitiesScreen() {
   };
 
   const handleDisable = (activity: PlannedActivity) => {
+    if (mutationRef.current) return;
     closeActionsMenu();
+    const session = apiContext.get().sessionVersion;
     Alert.alert(
       t('activities.disableTitle'),
       t('activities.disableConfirm'),
@@ -404,13 +488,17 @@ export default function ActivitiesScreen() {
           style: 'destructive',
           onPress: () => {
             void (async () => {
+              if (mutationRef.current || session !== apiContext.get().sessionVersion) return;
+              mutationRef.current = true;
               try {
-                await plannedActivityService.update(activity.id, { status: 'DISABLED' });
-                await notificationService.cancelActivityReminder(activity.id);
-                await loadActivities();
+                await plannedActivityService.update(activity.id, { status: 'DISABLED', updatedAt: activity.updatedAt });
+                if (session !== apiContext.get().sessionVersion) return;
+                removeVisibleActivity(activity.id);
+                void loadActivities();
+                void notificationService.cancelActivityReminder(activity.id).catch(handleNotificationError);
               } catch (e: any) {
-                Alert.alert(t('common.error'), e.response?.data?.error || t('activities.disableFailed'));
-              }
+                if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(e, t, 'activities.disableFailed'));
+              } finally { mutationRef.current = false; }
             })();
           },
         },
@@ -444,31 +532,8 @@ export default function ActivitiesScreen() {
     );
   };
 
-  const fallbackMotivation = (type: ActivityType) => {
-    switch (type) {
-      case 'STUDY':
-        return t('activities.motivationFallbackStudy');
-      case 'WORKOUT':
-        return t('activities.motivationFallbackWorkout');
-      case 'HABIT':
-        return t('activities.motivationFallbackHabit');
-      case 'CUSTOM':
-        return t('activities.motivationFallbackCustom');
-    }
-  };
-
   const activityMotivationText = (activity: PlannedActivity) =>
-    activity.displayMotivationText?.trim() ||
-    activity.motivationText?.trim() ||
-    fallbackMotivation(activity.type);
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+    activity.displayMotivationText?.trim() || activity.motivationText?.trim();
 
   return (
     <View style={styles.container}>
@@ -480,14 +545,20 @@ export default function ActivitiesScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => {
-              setRefreshing(true);
               void loadActivities();
             }}
           />
         }
         ListHeaderComponent={
           <>
-            <View style={styles.dailyProgressCard}>
+            <ResourceError error={error} retry={() => { void loadActivities(); }} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {[false, true].map((paused) => <TouchableOpacity key={String(paused)} accessibilityRole="tab" accessibilityState={{ selected: showPaused === paused }} onPress={() => setShowPaused(paused)} style={{ minHeight: 44, padding: 12, borderRadius: 12, backgroundColor: showPaused === paused ? colors.primaryLight : colors.surface }}>
+                <Text style={{ color: colors.textPrimary }}>{t(paused ? 'activities.paused' : 'activities.active')}</Text>
+              </TouchableOpacity>)}
+              <TouchableOpacity accessibilityRole="button" onPress={() => router.navigate('/(tabs)/activity-history')} style={{ minHeight: 44, padding: 12, borderRadius: 12, backgroundColor: colors.surface }}><Text style={{ color: colors.primary }}>{t('activities.history')} →</Text></TouchableOpacity>
+            </View>
+            {todayProgress.total > 0 && !showPaused ? <View style={styles.dailyProgressCard}>
               <ProgressRing
                 percentage={todayProgress.percentage}
                 colors={colors}
@@ -515,9 +586,10 @@ export default function ActivitiesScreen() {
               <View style={styles.progressStar}>
                 <Ionicons name="star" size={25} color={colors.textOnPrimary} />
               </View>
-            </View>
+            </View> : null}
 
             <TouchableOpacity
+              accessibilityRole="button" accessibilityLabel={t('activities.createTaskButton')}
               style={styles.logButton}
               onPress={openCreateModal}
               activeOpacity={0.85}
@@ -530,10 +602,11 @@ export default function ActivitiesScreen() {
           </>
         }
         ListEmptyComponent={
-          <Text style={styles.emptyText}>{t('activities.noPlannedActivities')}</Text>
+          loading ? <ActivityIndicator size="large" color={colors.primary} /> : !error ? <EmptyState title={t(showPaused ? 'activities.pausedEmpty' : 'activities.active')} message={t(showPaused ? 'activities.pausedHelp' : 'activities.noPlannedActivities')} icon={showPaused ? 'pause-circle-outline' : 'checkbox-outline'} /> : null
         }
         renderItem={({ item: activity }) => {
-          const completedToday = activity.scheduleType === 'DAILY' && activity.isCompletedToday;
+          const completedToday = activity.status === 'ACTIVE' && activity.scheduleType === 'DAILY' && activity.isCompletedToday;
+          const actionLabel = t(completingId === activity.id ? 'activities.completing' : completedToday ? 'activities.completed' : activity.status === 'DISABLED' ? 'activities.resume' : 'activities.complete');
 
           return (
             <View style={styles.card}>
@@ -546,15 +619,15 @@ export default function ActivitiesScreen() {
                     },
                   ]}
                 >
-                  <Text style={styles.activityIconEmoji}>
+                  <Text allowFontScaling={false} style={styles.activityIconEmoji}>
                     {activityEmoji[activity.type]}
                   </Text>
                 </View>
                 <View style={styles.cardContent}>
                   <View style={styles.titleRow}>
-                    <Text style={styles.rowTitle} numberOfLines={2}>
-                      {activity.displayTitle || activity.title}
-                    </Text>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${t('common.edit')}: ${activity.displayTitle || activity.title}`} onPress={() => openEditModal(activity)} style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
+                      <Text style={styles.rowTitle} numberOfLines={2}>{activity.displayTitle || activity.title}</Text>
+                    </TouchableOpacity>
                     <View
                       ref={(ref) => {
                         menuButtonRefs.current[activity.id] = ref;
@@ -562,6 +635,8 @@ export default function ActivitiesScreen() {
                       collapsable={false}
                     >
                       <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('activities.actions')}: ${activity.displayTitle || activity.title}`}
                         style={styles.menuButton}
                         onPress={() => openActionsMenu(activity)}
                         hitSlop={8}
@@ -581,28 +656,30 @@ export default function ActivitiesScreen() {
                     </Text>
                   ) : null}
                   {activity.displayDescription || activity.description ? (
-                    <Text style={styles.description}>
+                    <Text style={styles.description} numberOfLines={3}>
                       {activity.displayDescription || activity.description}
                     </Text>
                   ) : null}
                 </View>
               </View>
 
-              <View style={styles.motivationBadge}>
+              {activityMotivationText(activity) ? <View style={styles.motivationBadge}>
                 <Ionicons name="star" size={13} color={colors.success} />
                 <Text style={styles.motivationText}>
                   {activityMotivationText(activity)}
                 </Text>
-              </View>
+              </View> : null}
 
               <TouchableOpacity
+                accessibilityLabel={`${actionLabel}: ${activity.displayTitle || activity.title}`}
+                accessibilityRole="button" accessibilityState={{ disabled: completedToday || Boolean(completingId), busy: completingId === activity.id }}
                 style={[
                   styles.completeButton,
                   completedToday && styles.completedButton,
                   completingId === activity.id && styles.disabledButton,
                 ]}
-                onPress={() => handleComplete(activity)}
-                disabled={completedToday || completingId === activity.id}
+                onPress={() => activity.status === 'DISABLED' ? handleResume(activity) : handleComplete(activity)}
+                disabled={completedToday || Boolean(completingId)}
                 activeOpacity={0.85}
               >
                 {completedToday ? (
@@ -618,11 +695,7 @@ export default function ActivitiesScreen() {
                     completedToday && styles.completedButtonText,
                   ]}
                 >
-                  {completingId === activity.id
-                    ? t('activities.completing')
-                    : completedToday
-                      ? t('activities.completed')
-                      : t('activities.complete')}
+                  {actionLabel}
                   </Text>
               </TouchableOpacity>
             </View>
@@ -635,6 +708,7 @@ export default function ActivitiesScreen() {
         transparent
         animationType="fade"
         onRequestClose={closeActionsMenu}
+        onDismiss={finishMenuDismiss}
       >
         <View style={styles.menuModal}>
           <Pressable
@@ -652,8 +726,10 @@ export default function ActivitiesScreen() {
               ]}
             >
               <TouchableOpacity
+                accessibilityRole="button"
                 style={styles.contextMenuItem}
-                onPress={() => openEditModal(menuActivity)}
+                accessibilityLabel={t('common.edit')}
+                onPress={() => runMenuAction(() => openEditModal(menuActivity))}
               >
                 <Ionicons
                   name="create-outline"
@@ -663,8 +739,10 @@ export default function ActivitiesScreen() {
                 <Text style={styles.contextMenuText}>{t('common.edit')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                accessibilityRole="button"
                 style={styles.contextMenuItem}
-                onPress={() => handleDelete(menuActivity)}
+                accessibilityLabel={t('common.delete')}
+                onPress={() => runMenuAction(() => handleDelete(menuActivity))}
               >
                 <Ionicons
                   name="trash-outline"
@@ -675,10 +753,12 @@ export default function ActivitiesScreen() {
                   {t('common.delete')}
                 </Text>
               </TouchableOpacity>
-              {menuActivity.scheduleType === 'DAILY' ? (
+              {menuActivity.scheduleType === 'DAILY' && menuActivity.status === 'ACTIVE' ? (
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={styles.contextMenuItem}
-                  onPress={() => handleDisable(menuActivity)}
+                  accessibilityLabel={t('activities.disable')}
+                onPress={() => runMenuAction(() => handleDisable(menuActivity))}
                 >
                   <Ionicons
                     name="power-outline"
@@ -695,10 +775,10 @@ export default function ActivitiesScreen() {
         </View>
       </Modal>
 
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled">
+      <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeForm}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
+          <View style={[styles.modalCard, { paddingBottom: Math.max(16, insets.bottom) }]}>
+            <ScrollView keyboardShouldPersistTaps="handled" style={styles.formFields}>
               <Text
                 style={[
                   styles.modalTitle,
@@ -713,39 +793,48 @@ export default function ActivitiesScreen() {
                 </Text>
               ) : null}
 
+              <Text style={styles.label}>{t('activities.title')}</Text>
+              <TextInput
+                style={styles.input}
+                placeholder={t('activities.placeholder')}
+                accessibilityLabel={t('activities.title')}
+                returnKeyType="done"
+                value={title}
+                maxLength={200}
+                editable={!submitting}
+                onChangeText={setTitle}
+                placeholderTextColor={colors.textMuted}
+              />
+
               <Text style={styles.label}>{t('activities.type')}</Text>
               <View style={styles.typeGrid}>
                 {activityTypes.map(({ type, label }) => (
                   <TouchableOpacity
                     key={type}
+                    accessibilityRole="radio" accessibilityState={{ checked: selectedType === type }}
                     style={[
                       styles.typeChip,
-                      selectedType === type && { backgroundColor: activityColor[type] },
+                      selectedType === type && { backgroundColor: `${activityColor[type]}22`, borderColor: activityColor[type] },
                     ]}
+                    disabled={submitting}
                     onPress={() => setSelectedType(type)}
                   >
                     <Text style={[
                       styles.typeChipText,
-                      selectedType === type && { color: colors.textOnPrimary },
+                      selectedType === type && { color: colors.textPrimary },
                     ]}>{label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.label}>{t('activities.title')}</Text>
-              <TextInput
-                style={styles.input}
-                placeholder={t('activities.placeholder')}
-                value={title}
-                onChangeText={setTitle}
-                placeholderTextColor={colors.textMuted}
-              />
-
               <Text style={styles.label}>{t('activities.description')}</Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
+                accessibilityLabel={t('activities.description')}
                 placeholder={t('activities.descriptionPlaceholder')}
                 value={description}
+                maxLength={5000}
+                editable={!submitting}
                 onChangeText={setDescription}
                 placeholderTextColor={colors.textMuted}
                 multiline
@@ -756,11 +845,14 @@ export default function ActivitiesScreen() {
                 {scheduleOptions.map(({ type, label }) => (
                   <TouchableOpacity
                     key={type}
+                    accessibilityRole="radio" accessibilityState={{ checked: scheduleType === type }}
+                    disabled={submitting}
                     style={[
                       styles.typeChip,
                       scheduleType === type && styles.selectedScheduleChip,
                     ]}
                     onPress={() => {
+                      if (submittingRef.current) return;
                       setScheduleType(type);
                       if (type !== 'DATE') setDueDate(null);
                     }}
@@ -777,6 +869,7 @@ export default function ActivitiesScreen() {
                 <>
                   <Text style={styles.label}>{t('activities.date')}</Text>
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={styles.pickerButton}
                     onPress={() => setPickerMode(pickerMode === 'date' ? null : 'date')}
                   >
@@ -790,6 +883,7 @@ export default function ActivitiesScreen() {
               <Text style={styles.label}>{t('activities.timeOptional')}</Text>
               <View style={styles.timeRow}>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[styles.pickerButton, { flex: 1 }]}
                   onPress={() => setPickerMode(pickerMode === 'time' ? null : 'time')}
                 >
@@ -801,6 +895,7 @@ export default function ActivitiesScreen() {
                 </TouchableOpacity>
                 {dueTime ? (
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={styles.clearTimeButton}
                     onPress={() => setDueTime(null)}
                   >
@@ -839,7 +934,10 @@ export default function ActivitiesScreen() {
                 />
               ) : null}
 
+            </ScrollView>
+            <View style={styles.formActions}>
               <TouchableOpacity
+                accessibilityRole="button"
                 style={[styles.submitButton, submitting && { opacity: 0.6 }]}
                 onPress={handleSave}
                 disabled={submitting}
@@ -850,16 +948,16 @@ export default function ActivitiesScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => {
-                  setModalVisible(false);
-                  resetForm();
-                }}
+                accessibilityRole="button"
+                disabled={submitting}
+                style={styles.cancelButton}
+                onPress={closeForm}
               >
                 <Text style={styles.cancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
-            </ScrollView>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <CompletionCelebration
@@ -882,10 +980,7 @@ const createStyles = (theme: AppTheme) => {
     alignItems: 'center',
     backgroundColor: colors.background,
   },
-  list: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
-  },
+  list: { ...pageContent },
   dailyProgressCard: {
     minHeight: 112,
     flexDirection: 'row',
@@ -1012,10 +1107,8 @@ const createStyles = (theme: AppTheme) => {
     alignItems: 'flex-start',
   },
   menuButton: {
-    width: 30,
-    height: 30,
-    marginTop: -5,
-    marginRight: -5,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: borderRadius.full,
@@ -1114,12 +1207,15 @@ const createStyles = (theme: AppTheme) => {
     justifyContent: 'flex-end',
   },
   modalCard: {
-    maxHeight: '92%',
+    maxHeight: '92%', width: '100%', maxWidth: 720, alignSelf: 'center',
     backgroundColor: colors.surface,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
-    padding: spacing.xl,
+    padding: spacing.md,
   },
+  formFields: { flexShrink: 1 },
+  formActions: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  cancelButton: { minHeight: 44, justifyContent: 'center' },
   modalTitle: { ...typography.h3, color: colors.textPrimary, marginBottom: spacing.md },
   editOriginalHint: {
     ...typography.tiny,
@@ -1129,6 +1225,7 @@ const createStyles = (theme: AppTheme) => {
   label: { ...typography.small, color: colors.textSecondary, marginBottom: spacing.xs },
   typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   typeChip: {
+    minHeight: 44, justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.full,

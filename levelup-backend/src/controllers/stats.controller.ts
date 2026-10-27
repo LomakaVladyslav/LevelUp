@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
+import { activeStreakCount } from '../services/streak.service';
+import { dateKeyInTimezone, dateFromKey, getRequestTimezone } from '../services/planned-activity-metrics.service';
 import { xpProgressInCurrentLevel } from '../utils/constants';
 
 // GET /api/stats/overview
@@ -12,14 +14,14 @@ export const getOverview = async (
     const userId = req.user.id;
 
     const [user, totalActivities, streak, unlockedAchievements] =
-      await Promise.all([
+      await prisma.$transaction([
         prisma.user.findUnique({ where: { id: userId } }),
         prisma.activity.count({ where: { userId } }),
         prisma.streak.findUnique({
           where: { userId_type: { userId, type: 'daily' } },
         }),
         prisma.userAchievement.count({ where: { userId } }),
-      ]);
+      ], { isolationLevel: 'RepeatableRead' });
 
     if (!user) {
       res.status(404).json({ error: 'User not found' });
@@ -37,7 +39,7 @@ export const getOverview = async (
         xpProgress,
       },
       streak: {
-        current: streak?.currentCount ?? 0,
+        current: activeStreakCount(streak, new Date(), getRequestTimezone(req)),
         longest: streak?.longestCount ?? 0,
       },
       totalActivities,
@@ -57,37 +59,29 @@ export const getWeeklyStats = async (
   try {
     const userId = req.user.id;
 
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    sevenDaysAgo.setHours(0, 0, 0, 0);
-
-    const activities = await prisma.activity.findMany({
-      where: { userId, completedAt: { gte: sevenDaysAgo } },
-      orderBy: { completedAt: 'asc' },
-    });
-
-    // Group by day for the chart
+    const timezone = getRequestTimezone(req);
+    const now = new Date();
+    const today = dateFromKey(dateKeyInTimezone(now, timezone));
+    const firstDay = new Date(today.getTime() - 6 * 86400000);
+    const range = { gte: new Date(firstDay.getTime() - 86400000), lte: now };
+    const [activities, rewards] = await prisma.$transaction([
+      prisma.activity.findMany({ where: { userId, completedAt: range }, select: { completedAt: true } }),
+      prisma.xpHistory.findMany({ where: { userId, createdAt: range }, select: { createdAt: true, amount: true } }),
+    ], { isolationLevel: 'RepeatableRead' });
     const dayMap: Record<string, { count: number; xpEarned: number }> = {};
-
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().split('T')[0]; // "2024-01-15"
+    for (let i = 0; i < 7; i++) {
+      const key = new Date(firstDay.getTime() + i * 86400000).toISOString().slice(0, 10);
       dayMap[key] = { count: 0, xpEarned: 0 };
     }
-
     for (const activity of activities) {
-      const key = activity.completedAt.toISOString().split('T')[0];
-      if (dayMap[key]) {
-        dayMap[key].count += 1;
-        dayMap[key].xpEarned += activity.xpEarned;
-      }
+      const day = dayMap[dateKeyInTimezone(activity.completedAt, timezone)];
+      if (day) day.count += 1;
     }
-
-    const chartData = Object.entries(dayMap).map(([date, data]) => ({
-      date,
-      ...data,
-    }));
+    for (const reward of rewards) {
+      const day = dayMap[dateKeyInTimezone(reward.createdAt, timezone)];
+      if (day) day.xpEarned += reward.amount;
+    }
+    const chartData = Object.entries(dayMap).map(([date, data]) => ({ date, ...data }));
 
     res.json({ chartData });
   } catch (error) {
@@ -110,12 +104,14 @@ export const getXpHistory = async (
     const history = await prisma.xpHistory.findMany({
       where: { userId, createdAt: { gte: thirtyDaysAgo } },
       orderBy: { createdAt: 'asc' },
+      select: { createdAt: true, amount: true },
     });
 
     // Group by day and sum XP
     const dayMap: Record<string, number> = {};
+    const timezone = getRequestTimezone(req);
     for (const entry of history) {
-      const key = entry.createdAt.toISOString().split('T')[0];
+      const key = dateKeyInTimezone(entry.createdAt, timezone);
       dayMap[key] = (dayMap[key] ?? 0) + entry.amount;
     }
 

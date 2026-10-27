@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export const uploadsRoot = path.join(process.cwd(), 'uploads');
+export const uploadsRoot = path.resolve(process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads'));
 export const avatarUploadDir = path.join(uploadsRoot, 'avatars');
 
 export const ensureAvatarUploadDir = (): void => {

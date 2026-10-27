@@ -1,5 +1,5 @@
-import { ActivityType } from '@prisma/client';
-import prisma from '../utils/prisma';
+import { ActivityType, Prisma } from '@prisma/client';
+import { dateFromKey, dateKeyInTimezone } from './planned-activity-metrics.service';
 import { XP_PER_ACTIVITY } from '../utils/constants';
 
 const CORE_ACTIVITY_TYPES: ActivityType[] = ['STUDY', 'WORKOUT', 'HABIT'];
@@ -33,7 +33,7 @@ export interface XpBreakdown {
 
 const startOfLocalDay = (date: Date): Date => {
   const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
+  result.setUTCHours(0, 0, 0, 0);
   return result;
 };
 
@@ -130,23 +130,25 @@ export const calculateXpBreakdown = (
 export const calculateAdaptiveXp = async (
   userId: string,
   activityType: ActivityType,
-  completedAt = new Date(),
+  completedAt: Date,
+  db: Prisma.TransactionClient,
+  timezone = 'UTC',
 ): Promise<XpBreakdown> => {
   const balanceWindowStart = new Date(
     completedAt.getTime() - BALANCE_WINDOW_DAYS * DAY_IN_MS,
   );
 
   const [streak, latestActivity, categoryGroups] = await Promise.all([
-    prisma.streak.findUnique({
+    db.streak.findUnique({
       where: { userId_type: { userId, type: 'daily' } },
       select: { currentCount: true, lastActivityDate: true },
     }),
-    prisma.activity.findFirst({
+    db.activity.findFirst({
       where: { userId },
       orderBy: { completedAt: 'desc' },
       select: { completedAt: true },
     }),
-    prisma.activity.groupBy({
+    db.activity.groupBy({
       by: ['type'],
       where: {
         userId,
@@ -170,7 +172,7 @@ export const calculateAdaptiveXp = async (
     projectedStreak: getProjectedStreak(
       streak?.currentCount ?? 0,
       streak?.lastActivityDate ?? null,
-      completedAt,
+      dateFromKey(dateKeyInTimezone(completedAt, timezone)),
     ),
     recentCategoryCounts,
     inactiveForMs: latestActivity

@@ -1,14 +1,17 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { ActionButton, EmptyState, pageContent } from '../../components/ScreenUi';
+import { useScreenResource } from '../../hooks/useScreenResource';
+import { ResourceError } from '../../components/ResourceError';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
-  ScrollView,
+  FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { activityService } from '../../services/activity.service';
 import { Activity, ActivityType } from '../../types';
 import {
@@ -26,17 +29,30 @@ import { ActivityDetailsModal } from '../../components/ActivityDetailsModal';
 
 export default function ActivityHistoryScreen() {
   const t = useT();
+  const router = useRouter();
   const theme = useTheme();
-  const { colors, activityColor } = theme;
+  const { colors } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const { data, error, loading, refreshing, reload, setData, getVersion } = useScreenResource(() => activityService.getAll(1));
+  const activities = data?.activities ?? [];
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState<unknown>(null);
+  const paging = useRef(false);
+  const loadMore = async () => {
+    if (paging.current || refreshing || !data || data.pagination.page >= data.pagination.totalPages) return;
+    paging.current = true;
+    setLoadingMore(true);
+    setPageError(null);
+    const version = getVersion();
+    try {
+      const next = await activityService.getAll(data.pagination.page + 1);
+      if (version !== getVersion()) return;
+      setData({ ...next, activities: [...new Map([...data.activities, ...next.activities].map((activity) => [activity.id, activity])).values()] });
+    } catch (failure) { if (version === getVersion()) setPageError(failure); }
+    finally { paging.current = false; setLoadingMore(false); }
+  };
 
   const activityLabel = (type: ActivityType) => {
     switch (type) {
@@ -51,29 +67,6 @@ export default function ActivityHistoryScreen() {
     }
   };
 
-  const loadActivities = useCallback(async (nextPage = 1, append = false) => {
-    try {
-      const data = await activityService.getAll(nextPage);
-      setActivities((current) => append
-        ? [...current, ...data.activities]
-        : data.activities);
-      setPage(data.pagination.page);
-      setTotalPages(data.pagination.totalPages);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
-    }
-  }, [language]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadActivities(1);
-    }, [loadActivities])
-  );
-
   if (loading) {
     return (
       <View style={styles.center}>
@@ -84,35 +77,22 @@ export default function ActivityHistoryScreen() {
 
   return (
     <>
-      <ScrollView
+      <FlatList
         style={styles.container}
         contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void loadActivities(1);
-            }}
-          />
-        }
-      >
-        {activities.length === 0 ? (
-          <Text style={styles.emptyText}>{t('home.noActivities')}</Text>
-        ) : (
-          activities.map((activity) => (
+        data={activities}
+        keyExtractor={(activity) => activity.id}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setPageError(null); void reload(); }} />}
+        ListHeaderComponent={<ResourceError error={error} retry={() => { void reload(); }} />}
+        ListEmptyComponent={!error ? <EmptyState title={t('activities.historyEmpty')} message={t('home.noActivities')} action={{ label: t('home.allTasks'), onPress: () => router.navigate('/(tabs)/activities') }} /> : null}
+        renderItem={({ item: activity }) => (
             <TouchableOpacity
+              accessibilityRole="button"
               key={activity.id}
               style={styles.row}
               onPress={() => setSelectedActivity(activity)}
               activeOpacity={0.75}
             >
-              <View
-                style={[
-                  styles.typeDot,
-                  { backgroundColor: activityColor[activity.type] },
-                ]}
-              />
               <Text style={styles.activityEmoji}>{activityEmoji[activity.type]}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>
@@ -123,28 +103,16 @@ export default function ActivityHistoryScreen() {
                   {new Date(activity.completedAt).toLocaleString(getLocale(language))}
                 </Text>
               </View>
-              <Text style={styles.rowXp}>+{activity.xpEarned}</Text>
+              <Text style={styles.rowXp}>+{activity.xpEarned} XP</Text>
             </TouchableOpacity>
-          ))
         )}
-
-        {page < totalPages ? (
-          <TouchableOpacity
-            style={[styles.loadMoreButton, loadingMore && { opacity: 0.6 }]}
-            disabled={loadingMore}
-            onPress={() => {
-              setLoadingMore(true);
-              void loadActivities(page + 1, true);
-            }}
-          >
-            {loadingMore ? (
-              <ActivityIndicator color={colors.textOnPrimary} />
-            ) : (
-              <Text style={styles.loadMoreText}>{t('activities.loadMore')}</Text>
-            )}
-          </TouchableOpacity>
-        ) : null}
-      </ScrollView>
+        ListFooterComponent={<>
+          <ResourceError error={pageError} retry={() => { void loadMore(); }} />
+          {data && data.pagination.page < data.pagination.totalPages ? (
+            <ActionButton label={t('activities.loadMore')} loading={loadingMore} disabled={refreshing} onPress={() => { void loadMore(); }} />
+          ) : null}
+        </>}
+      />
       <ActivityDetailsModal
         activity={selectedActivity}
         visible={Boolean(selectedActivity)}
@@ -159,7 +127,7 @@ const createStyles = (theme: AppTheme) => {
 
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.md, paddingBottom: spacing.xl },
+  content: { ...pageContent },
   center: {
     flex: 1,
     justifyContent: 'center',
@@ -180,7 +148,7 @@ const createStyles = (theme: AppTheme) => {
   activityEmoji: { fontSize: 22 },
   rowTitle: { ...typography.bodyBold, color: colors.textPrimary },
   rowMeta: { ...typography.tiny, color: colors.textSecondary, marginTop: 2 },
-  rowXp: { ...typography.bodyBold, color: colors.xpGold },
+  rowXp: { ...typography.bodyBold, color: colors.xpText },
   loadMoreButton: {
     minHeight: 46,
     borderRadius: borderRadius.md,

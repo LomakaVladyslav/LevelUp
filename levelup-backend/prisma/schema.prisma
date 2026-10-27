@@ -12,6 +12,7 @@ model User {
   email        String   @unique
   username     String   @unique
   passwordHash String
+  sessionVersion Int @default(0)
   avatarUrl    String?
   age          Int?
   xp           Int      @default(0)
@@ -26,6 +27,30 @@ model User {
   xpHistory        XpHistory[]
   goals            Goal[]
   passwordResetTokens PasswordResetToken[]
+  mutationReceipts MutationReceipt[]
+  avatar Avatar?
+}
+
+model Avatar {
+  id String @id @default(uuid())
+  userId String @unique
+  data Bytes
+  contentType String
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MutationReceipt {
+  id String @id @default(uuid())
+  userId String
+  key String
+  requestHash String
+  response Json
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([createdAt])
 }
 
 model PasswordResetToken {
@@ -48,6 +73,7 @@ model Activity {
   title       String
   description String?
   xpEarned    Int
+  hiddenAt    DateTime?
   duration    Int?
   plannedActivityId String?
   completedForDate DateTime?

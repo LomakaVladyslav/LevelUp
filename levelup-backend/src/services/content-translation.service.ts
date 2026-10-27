@@ -50,9 +50,12 @@ type TranslationDependencies = {
     }>,
   ) => Promise<void>;
   onError?: (error: unknown) => void;
+  background?: boolean;
 };
 
 const TRANSLATION_TIMEOUT_MS = 4000;
+const pendingJobs = new Set<string>();
+let activeJobs = 0;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -124,7 +127,7 @@ const generateWithOpenAI = async (
     throw new Error('OPENAI_API_KEY is not configured');
   }
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0, timeout: TRANSLATION_TIMEOUT_MS });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
 
@@ -259,7 +262,7 @@ export const resolveLocalizedRecords = async <
 
   let generated: GeneratedTranslation[] = [];
 
-  if (missing.length > 0) {
+  const generateMissing = async () => {
     try {
       generated = await dependencies.generate(missing, locale);
       const generatedById = new Map(
@@ -285,6 +288,25 @@ export const resolveLocalizedRecords = async <
     } catch (error) {
       dependencies.onError?.(error);
       generated = [];
+    }
+  }
+
+  if (missing.length > 0) {
+    if (dependencies.background) {
+      // Reads return cached/original content immediately. Limit background work and retries.
+      const key = `${locale}:${missing.map((item) => item.id + item.sourceHash).join(':')}`;
+      if (process.env.OPENAI_API_KEY && activeJobs < 2 && !pendingJobs.has(key)) {
+        missing.splice(30);
+        pendingJobs.add(key);
+        activeJobs += 1;
+        void generateMissing().finally(() => {
+          activeJobs -= 1;
+          const timer = setTimeout(() => pendingJobs.delete(key), 60000);
+          timer.unref();
+        });
+      }
+    } else {
+      await generateMissing();
     }
   }
 
@@ -337,6 +359,7 @@ export const localizeActivities = async <
 ) =>
   resolveLocalizedRecords(activities, locale, {
     generate: generateWithOpenAI,
+    background: true,
     save: async (translations) => {
       await prisma.$transaction(
         translations.map((translation) =>
@@ -374,6 +397,7 @@ export const localizePlannedActivities = async <
 ) =>
   resolveLocalizedRecords(activities, locale, {
     generate: generateWithOpenAI,
+    background: true,
     save: async (translations) => {
       await prisma.$transaction(
         translations.map((translation) =>

@@ -1,4 +1,4 @@
-import test, { afterEach } from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
@@ -6,6 +6,7 @@ import { ActivityType, PlannedActivityScheduleType } from '@prisma/client';
 import type { Express } from 'express';
 
 process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:1/never_used';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
 const app = require('../index').default as Express;
@@ -99,6 +100,15 @@ const mockTransactionPassthrough = () => {
     return Promise.all(operation as Promise<unknown>[]);
   });
 };
+
+beforeEach(() => {
+  stubMethod(prisma.user as unknown as Record<string, unknown>, 'findUnique', async () => ({ sessionVersion: 0 }));
+  stubMethod(prisma.user as unknown as Record<string, unknown>, 'findUniqueOrThrow', async () => ({ xp: 30, level: 1 }));
+  stubMethod(prisma.activity as unknown as Record<string, unknown>, 'findFirst', async () => null);
+  stubMethod(prisma.goal as unknown as Record<string, unknown>, 'findMany', async () => []);
+  stubMethod(prisma as unknown as Record<string, unknown>, '$queryRaw', async () => [{ id: 'user-1', sessionVersion: 0 }]);
+  mockTransactionPassthrough();
+});
 
 test('create planned activity rejects invalid payloads before hitting the database', async () => {
   const response = await request(app)

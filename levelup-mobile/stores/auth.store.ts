@@ -1,14 +1,14 @@
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../services/auth.service';
+import { sessionStorage } from '../services/session-storage';
+import { apiContext } from '../services/api-context';
+import { notificationService } from '../services/notification.service';
 import { User } from '../types';
 
 interface AuthStore {
   token: string | null;
   user: User | null;
   isLoading: boolean;
-
-  // Actions
   setAuth: (token: string, user: User) => Promise<void>;
   setUser: (user: User) => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -17,64 +17,81 @@ interface AuthStore {
   updateUser: (updates: Partial<User>) => void;
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
-  token: null,
-  user: null,
-  isLoading: true,
-
-  // Called after login or register
+let generation = 0;
+let userRevision = 0;
+let storageQueue: Promise<unknown> = Promise.resolve();
+const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = storageQueue.then(operation, operation);
+  storageQueue = next.catch(() => undefined);
+  return next;
+};
+const reportStorageError = () => console.warn('Could not update the local session cache');
+export const useAuthStore = create<AuthStore>((set, get) => ({
+  token: null, user: null, isLoading: true,
   setAuth: async (token, user) => {
-    await AsyncStorage.setItem('token', token);
-    await AsyncStorage.setItem('user', JSON.stringify(user));
-    set({ token, user });
+    const version = ++generation;
+    ++userRevision;
+    await serialize(async () => {
+      if (version !== generation) return;
+      await sessionStorage.write(token, user);
+    });
+    if (version !== generation) return;
+    apiContext.setToken(token, user.id);
+    set({ token, user, isLoading: false });
   },
-
   setUser: async (user) => {
-    await AsyncStorage.setItem('user', JSON.stringify(user));
+    if (!get().token || get().user?.id !== user.id) return;
+    // Profile saves can arrive after a newer completion response. Rewards are
+    // monotonic; an older profile snapshot must not roll back displayed progress.
+    user = { ...user, xp: Math.max(user.xp, get().user!.xp), level: Math.max(user.level, get().user!.level) };
+    ++userRevision;
+    const version = generation;
+    const token = get().token!;
     set({ user });
+    await serialize(async () => {
+      if (version === generation) await sessionStorage.write(token, user);
+    }).catch(reportStorageError);
   },
-
   refreshUser: async () => {
+    if (!get().token) return;
+    const version = generation;
+    const revision = ++userRevision;
     const user = await authService.getMe();
-    await AsyncStorage.setItem('user', JSON.stringify(user));
-    set({ user });
+    if (version !== generation || revision !== userRevision) return;
+    await get().setUser(user);
   },
-
-  // Called on logout button press
   logout: async () => {
-    await AsyncStorage.removeItem('token');
-    await AsyncStorage.removeItem('user');
-    set({ token: null, user: null });
-  },
-
-  // Called on app start to restore session
-  loadFromStorage: async () => {
-    try {
-      const [token, userJson] = await Promise.all([
-        AsyncStorage.getItem('token'),
-        AsyncStorage.getItem('user'),
-      ]);
-
-      if (token && userJson) {
-        set({ token, user: JSON.parse(userJson), isLoading: false });
-      } else {
-        set({ isLoading: false });
-      }
-    } catch {
-      set({ isLoading: false });
-    }
-  },
-
-  // Used after leveling up or earning XP
-  updateUser: (updates) => {
-    set((state) => {
-      const user = state.user ? { ...state.user, ...updates } : null;
-
-      if (user) {
-        void AsyncStorage.setItem('user', JSON.stringify(user));
-      }
-
-      return { user };
+    ++generation;
+    ++userRevision;
+    apiContext.setToken(null);
+    set({ token: null, user: null, isLoading: false });
+    await Promise.allSettled([
+      serialize(() => sessionStorage.clear()),
+      notificationService.cancelAllReminders(),
+    ]).then((results) => {
+      if (results.some((result) => result.status === 'rejected')) reportStorageError();
     });
   },
+  loadFromStorage: async () => {
+    const version = generation;
+    try {
+      const session = await serialize(() => sessionStorage.read());
+      if (version !== generation) return;
+      if (session) {
+        apiContext.setToken(session.token, session.user.id);
+        set({ token: session.token, user: session.user, isLoading: false });
+      } else {
+        apiContext.setToken(null);
+        set({ token: null, user: null, isLoading: false });
+      }
+    } catch {
+      if (version === generation) { apiContext.setToken(null); set({ token: null, user: null, isLoading: false }); }
+    }
+  },
+  updateUser: (updates) => {
+    const user = get().user;
+    if (user) void get().setUser({ ...user, ...updates, id: user.id });
+  },
 }));
+
+apiContext.onSessionExpired(() => { void useAuthStore.getState().logout(); });

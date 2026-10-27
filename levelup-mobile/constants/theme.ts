@@ -5,10 +5,11 @@ const lightColors = {
   primaryDark: '#4B2FCC',
 
   // Semantic
+  xpText: '#905100',
   xpGold: '#F5A623',        // XP and level up color
-  streakFire: '#FF6B35',    // streak color
-  success: '#34C759',
-  danger: '#FF3B30',
+  streakFire: '#B84618',    // streak color
+  success: '#247A3B',
+  danger: '#C52C24',
 
   // Activity types
   study: '#5B8DEF',
@@ -25,7 +26,7 @@ const lightColors = {
   // Text
   textPrimary: '#1C1C1E',
   textSecondary: '#6D6D72',
-  textMuted: '#AEAEB2',
+  textMuted: '#696971',
   textOnPrimary: '#FFFFFF',
 
   // Themed supporting colors
@@ -33,7 +34,7 @@ const lightColors = {
   modalOverlay: 'rgba(0,0,0,0.5)',
   levelTextMuted: 'rgba(255,255,255,0.8)',
   levelTrack: 'rgba(255,255,255,0.3)',
-  cardBorder: '#E4F2E7',
+  cardBorder: '#E5E5EA',
   cardShadow: '#1F7A38',
   primaryShadow: '#40269A',
   successSurface: '#EAF9EE',
@@ -46,11 +47,12 @@ export type ThemeColors = typeof lightColors;
 
 const darkColors: ThemeColors = {
   // Brand
-  primary: '#B8F21D',
-  primaryLight: '#24330D',
-  primaryDark: '#D4FF5A',
+  primary: '#BDA6FF',
+  primaryLight: '#302447',
+  primaryDark: '#D6C6FF',
 
   // Semantic
+  xpText: '#F7C846',
   xpGold: '#F7C846',
   streakFire: '#FF7A45',
   success: '#8FDF76',
@@ -63,29 +65,29 @@ const darkColors: ThemeColors = {
   custom: '#C78BFF',
 
   // Neutrals
-  background: '#050506',
-  surface: '#0D0E0B',
-  surfaceSecondary: '#161812',
-  border: '#303623',
+  background: '#111018',
+  surface: '#1B1924',
+  surfaceSecondary: '#24212F',
+  border: '#3A354A',
 
   // Text
-  textPrimary: '#F2F5EC',
-  textSecondary: '#B4BBAA',
-  textMuted: '#68705F',
-  textOnPrimary: '#101304',
+  textPrimary: '#F5F2FF',
+  textSecondary: '#BDB7CB',
+  textMuted: '#ADA6BE',
+  textOnPrimary: '#181126',
 
   // Themed supporting colors
   overlay: 'rgba(0, 0, 0, 0.72)',
   modalOverlay: 'rgba(0,0,0,0.72)',
-  levelTextMuted: 'rgba(16,19,4,0.72)',
-  levelTrack: 'rgba(16,19,4,0.22)',
-  cardBorder: '#252C17',
+  levelTextMuted: 'rgba(24,17,38,0.8)',
+  levelTrack: 'rgba(24,17,38,0.22)',
+  cardBorder: '#3A354A',
   cardShadow: '#000000',
   primaryShadow: '#000000',
   successSurface: '#132616',
   successBorder: '#2F5D36',
   successText: '#9EF1A5',
-  starTile: '#7EA315',
+  starTile: '#7058B2',
 };
 
 export type ThemeMode = 'light' | 'dark';

@@ -1,17 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Image,
-} from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, TextInput } from 'react-native';
 import { Link } from 'expo-router';
 import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/auth.store';
@@ -19,508 +7,87 @@ import { AppTheme, spacing, borderRadius, typography } from '../../constants/the
 import { useT } from '../../hooks/useT';
 import { useTheme } from '../../hooks/useTheme';
 import { getApiErrorMessage } from '../../utils/api-error';
+import { AuthFrame } from '../../components/AuthFrame';
+import { ActionButton } from '../../components/ScreenUi';
 
-type AccountFieldErrors = {
-  email?: string;
-  username?: string;
-  password?: string;
-};
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
+type FieldErrors = { email?: string; username?: string; password?: string };
 export default function RegisterScreen() {
   const t = useT();
   const theme = useTheme();
   const { colors } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [step, setStep] = useState<1 | 2>(1);
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [age, setAge] = useState('');
-  const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<AccountFieldErrors>({});
-  const [emailTouched, setEmailTouched] = useState(false);
-  const [usernameTouched, setUsernameTouched] = useState(false);
-  const [checkingAvailability, setCheckingAvailability] = useState({
-    email: false,
-    username: false,
-  });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const emailCheckId = useRef(0);
-  const usernameCheckId = useRef(0);
-  const setAuth = useAuthStore((s) => s.setAuth);
-
-  const setFieldError = useCallback(
-    (field: keyof AccountFieldErrors, message?: string) => {
-      setFieldErrors((current) => ({ ...current, [field]: message }));
-    },
-    [],
-  );
-
-  const getEmailError = useCallback(
-    (value: string) => {
-      if (!value.trim()) return t('auth.emailRequired');
-      if (!EMAIL_REGEX.test(value.trim())) return t('auth.emailInvalid');
-      return undefined;
-    },
-    [t],
-  );
-
-  const getUsernameError = useCallback(
-    (value: string) =>
-      value.trim() ? undefined : t('auth.usernameRequired'),
-    [t],
-  );
-
-  const getPasswordError = useCallback(
-    (value: string) => {
-      if (!value) return t('auth.passwordRequired');
-      if (value.length < 6) return t('register.passwordShort');
-      return undefined;
-    },
-    [t],
-  );
-
-  const checkEmailAvailability = useCallback(
-    async (value: string) => {
-      const normalizedEmail = value.trim().toLowerCase();
-      const localError = getEmailError(normalizedEmail);
-
-      if (localError) {
-        setFieldError('email', localError);
-        return false;
-      }
-
-      const requestId = ++emailCheckId.current;
-      setCheckingAvailability((current) => ({ ...current, email: true }));
-
-      try {
-        const result = await authService.availability({ email: normalizedEmail });
-        if (requestId !== emailCheckId.current) return false;
-
-        const message =
-          result.emailAvailable === false ? t('auth.emailInUse') : undefined;
-        setFieldError('email', message);
-        return !message;
-      } catch (error: any) {
-        if (requestId === emailCheckId.current) {
-          setFieldError(
-            'email',
-            getApiErrorMessage(error, t, 'common.somethingWrong'),
-          );
-        }
-        return false;
-      } finally {
-        if (requestId === emailCheckId.current) {
-          setCheckingAvailability((current) => ({ ...current, email: false }));
-        }
-      }
-    },
-    [getEmailError, setFieldError, t],
-  );
-
-  const checkUsernameAvailability = useCallback(
-    async (value: string) => {
-      const normalizedUsername = value.trim();
-      const localError = getUsernameError(normalizedUsername);
-
-      if (localError) {
-        setFieldError('username', localError);
-        return false;
-      }
-
-      const requestId = ++usernameCheckId.current;
-      setCheckingAvailability((current) => ({ ...current, username: true }));
-
-      try {
-        const result = await authService.availability({
-          username: normalizedUsername,
-        });
-        if (requestId !== usernameCheckId.current) return false;
-
-        const message =
-          result.usernameAvailable === false
-            ? t('auth.usernameInUse')
-            : undefined;
-        setFieldError('username', message);
-        return !message;
-      } catch (error: any) {
-        if (requestId === usernameCheckId.current) {
-          setFieldError(
-            'username',
-            getApiErrorMessage(error, t, 'common.somethingWrong'),
-          );
-        }
-        return false;
-      } finally {
-        if (requestId === usernameCheckId.current) {
-          setCheckingAvailability((current) => ({
-            ...current,
-            username: false,
-          }));
-        }
-      }
-    },
-    [getUsernameError, setFieldError, t],
-  );
-
-  useEffect(() => {
-    if (!emailTouched) return undefined;
-
-    const timer = setTimeout(() => {
-      void checkEmailAvailability(email);
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [checkEmailAvailability, email, emailTouched]);
-
-  useEffect(() => {
-    if (!usernameTouched) return undefined;
-
-    const timer = setTimeout(() => {
-      void checkUsernameAvailability(username);
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [checkUsernameAvailability, username, usernameTouched]);
-
-  const validateLocalAccountFields = () => {
-    const errors = {
-      email: getEmailError(email),
-      username: getUsernameError(username),
-      password: getPasswordError(password),
-    };
-
-    setFieldErrors(errors);
-    return !errors.email && !errors.username && !errors.password;
-  };
-
-  const parsedAge = () => Number(age);
-
-  const pickAvatar = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert(t('image.permissionTitle'), t('image.permissionMessage'));
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets[0]?.uri) {
-      setAvatarUri(result.assets[0].uri);
-    }
-  };
-
-  const handleNext = async () => {
-    setEmailTouched(true);
-    setUsernameTouched(true);
-
-    if (!validateLocalAccountFields()) return;
-
-    const [emailAvailable, usernameAvailable] = await Promise.all([
-      checkEmailAvailability(email),
-      checkUsernameAvailability(username),
-    ]);
-
-    if (emailAvailable && usernameAvailable) {
-      setStep(2);
-    }
-  };
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  const nameInput = useRef<TextInput>(null);
+  const passwordInput = useRef<TextInput>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleRegister = async () => {
-    const ageValue = parsedAge();
-    if (!Number.isInteger(ageValue) || ageValue < 1 || ageValue > 120) {
-      Alert.alert(t('common.error'), t('register.ageInvalid'));
-      return;
-    }
-
+    if (pending.current) return;
+    const errors: FieldErrors = {};
+    if (!email.trim()) errors.email = t('auth.emailRequired');
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) errors.email = t('auth.emailInvalid');
+    if (!username.trim()) errors.username = t('auth.usernameRequired');
+    if (password.length < 6) errors.password = t('register.passwordShort');
+    setFieldErrors(errors);
+    setError('');
+    if (Object.keys(errors).length) return;
+    pending.current = true;
     setLoading(true);
     try {
-      const { token, user } = await authService.register(
-        email.trim().toLowerCase(),
-        username.trim(),
-        password,
-        ageValue,
-        avatarUri,
-      );
-      await setAuth(token, user);
-    } catch (error: any) {
-      const errorCode = error?.response?.data?.errorCode;
-
-      if (errorCode === 'AUTH_EMAIL_IN_USE') {
-        setFieldError('email', t('auth.emailInUse'));
-        setStep(1);
-        return;
-      }
-
-      if (errorCode === 'AUTH_USERNAME_IN_USE') {
-        setFieldError('username', t('auth.usernameInUse'));
-        setStep(1);
-        return;
-      }
-
-      Alert.alert(
-        t('register.failed'),
-        getApiErrorMessage(error, t, 'common.somethingWrong'),
-      );
-    } finally {
-      setLoading(false);
-    }
+      // The server checks uniqueness atomically. Optional profile fields remain
+      // available in Settings, without an extra signup screen or preflight reads.
+      const result = await authService.register(email.trim().toLowerCase(), username.trim(), password);
+      if (mounted.current) await useAuthStore.getState().setAuth(result.token, result.user);
+    } catch (failure: any) {
+      if (!mounted.current) return;
+      const code = failure.response?.data?.errorCode;
+      if (code === 'AUTH_EMAIL_IN_USE') setFieldErrors({ email: t('auth.emailInUse') });
+      else if (code === 'AUTH_USERNAME_IN_USE') setFieldErrors({ username: t('auth.usernameInUse') });
+      else setError(getApiErrorMessage(failure, t, 'register.failed'));
+    } finally { pending.current = false; if (mounted.current) setLoading(false); }
   };
 
-  const accountStepComplete =
-    Boolean(email.trim()) &&
-    Boolean(username.trim()) &&
-    password.length >= 6 &&
-    EMAIL_REGEX.test(email.trim());
-  const hasAccountErrors = Boolean(
-    fieldErrors.email || fieldErrors.username || fieldErrors.password,
-  );
-  const availabilityPending =
-    checkingAvailability.email || checkingAvailability.username;
-  const nextDisabled =
-    !accountStepComplete || hasAccountErrors || availabilityPending;
-
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView contentContainerStyle={styles.inner}>
-        {step === 1 ? (
-          <>
-            <Text style={styles.emoji}>⚔️</Text>
-            <Text style={styles.title}>{t('register.title')}</Text>
-            <Text style={styles.subtitle}>{t('register.subtitle')}</Text>
-
-            <TextInput
-              style={[styles.input, fieldErrors.email ? styles.inputError : null]}
-              placeholder={t('auth.email')}
-              value={email}
-              onChangeText={(value) => {
-                setEmail(value);
-                setFieldError('email');
-              }}
-              onBlur={() => setEmailTouched(true)}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              placeholderTextColor={colors.textMuted}
-            />
-            {checkingAvailability.email ? (
-              <Text style={styles.fieldHintText}>
-                {t('register.checkingAvailability')}
-              </Text>
-            ) : fieldErrors.email ? (
-              <Text style={styles.fieldErrorText}>{fieldErrors.email}</Text>
-            ) : null}
-
-            <TextInput
-              style={[
-                styles.input,
-                fieldErrors.username ? styles.inputError : null,
-              ]}
-              placeholder={t('register.username')}
-              value={username}
-              onChangeText={(value) => {
-                setUsername(value);
-                setFieldError('username');
-              }}
-              onBlur={() => setUsernameTouched(true)}
-              autoCapitalize="none"
-              placeholderTextColor={colors.textMuted}
-            />
-            {checkingAvailability.username ? (
-              <Text style={styles.fieldHintText}>
-                {t('register.checkingAvailability')}
-              </Text>
-            ) : fieldErrors.username ? (
-              <Text style={styles.fieldErrorText}>{fieldErrors.username}</Text>
-            ) : null}
-
-            <TextInput
-              style={[
-                styles.input,
-                fieldErrors.password ? styles.inputError : null,
-              ]}
-              placeholder={t('register.passwordPlaceholder')}
-              value={password}
-              onChangeText={(value) => {
-                setPassword(value);
-                setFieldError('password', value ? getPasswordError(value) : undefined);
-              }}
-              secureTextEntry
-              placeholderTextColor={colors.textMuted}
-            />
-            {fieldErrors.password ? (
-              <Text style={styles.fieldErrorText}>{fieldErrors.password}</Text>
-            ) : null}
-
-            <TouchableOpacity
-              style={[styles.button, nextDisabled && styles.buttonDisabled]}
-              onPress={handleNext}
-              disabled={nextDisabled}
-            >
-              <Text style={styles.buttonText}>{t('common.next')}</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={styles.emoji}>🧑</Text>
-            <Text style={styles.title}>{t('register.profileTitle')}</Text>
-            <Text style={styles.subtitle}>{t('register.profileSubtitle')}</Text>
-
-            <TouchableOpacity style={styles.avatarPicker} onPress={pickAvatar}>
-              {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-              ) : (
-                <Text style={styles.avatarPlaceholder}>+</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.avatarButton} onPress={pickAvatar}>
-              <Text style={styles.avatarButtonText}>
-                {avatarUri ? t('register.changeAvatar') : t('register.pickAvatar')}
-              </Text>
-            </TouchableOpacity>
-
-            <TextInput
-              style={styles.input}
-              placeholder={t('register.agePlaceholder')}
-              value={age}
-              onChangeText={setAge}
-              keyboardType="number-pad"
-              placeholderTextColor={colors.textMuted}
-            />
-
-            <View style={styles.actionsRow}>
-              <TouchableOpacity
-                style={[styles.secondaryButton, loading && styles.buttonDisabled]}
-                onPress={() => setStep(1)}
-                disabled={loading}
-              >
-                <Text style={styles.secondaryButtonText}>{t('common.back')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.button,
-                  styles.flexButton,
-                  loading && styles.buttonDisabled,
-                ]}
-                onPress={handleRegister}
-                disabled={loading}
-              >
-                <Text style={styles.buttonText}>
-                  {loading ? t('register.loading') : t('register.button')}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-
-        <Link href="/auth/login" style={styles.link}>
-          {t('register.link')}
-        </Link>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
+  return <AuthFrame>
+    <Text style={styles.title}>{t('register.title')}</Text>
+    <Text style={styles.subtitle}>{t('register.subtitle')}</Text>
+    <Text style={styles.label}>{t('auth.email')}</Text>
+    <TextInput style={[styles.input, fieldErrors.email && styles.inputError]} value={email} placeholder={t('auth.email')}
+      accessibilityLabel={t('auth.email')} editable={!loading} maxLength={254} keyboardType="email-address"
+      autoCapitalize="none" autoCorrect={false} autoComplete="email" textContentType="emailAddress" returnKeyType="next"
+      onSubmitEditing={() => nameInput.current?.focus()} blurOnSubmit={false} placeholderTextColor={colors.textMuted}
+      onChangeText={(value) => { setEmail(value); setFieldErrors((state) => ({ ...state, email: undefined })); setError(''); }} />
+    {fieldErrors.email ? <Text accessibilityRole="alert" style={styles.error}>{fieldErrors.email}</Text> : null}
+    <Text style={styles.label}>{t('register.username')}</Text>
+    <TextInput ref={nameInput} style={[styles.input, fieldErrors.username && styles.inputError]} value={username} placeholder={t('register.username')}
+      accessibilityLabel={t('register.username')} editable={!loading} maxLength={50} autoCapitalize="none" autoCorrect={false}
+      autoComplete="username-new" textContentType="username" returnKeyType="next" blurOnSubmit={false}
+      onSubmitEditing={() => passwordInput.current?.focus()} placeholderTextColor={colors.textMuted}
+      onChangeText={(value) => { setUsername(value); setFieldErrors((state) => ({ ...state, username: undefined })); setError(''); }} />
+    {fieldErrors.username ? <Text accessibilityRole="alert" style={styles.error}>{fieldErrors.username}</Text> : null}
+    <Text style={styles.label}>{t('auth.password')}</Text>
+    <TextInput ref={passwordInput} style={[styles.input, fieldErrors.password && styles.inputError]} value={password} placeholder={t('register.passwordPlaceholder')}
+      accessibilityLabel={t('auth.password')} editable={!loading} secureTextEntry autoComplete="new-password" textContentType="newPassword"
+      returnKeyType="go" onSubmitEditing={() => { void handleRegister(); }} placeholderTextColor={colors.textMuted}
+      onChangeText={(value) => { setPassword(value); setFieldErrors((state) => ({ ...state, password: value && value.length < 6 ? t('register.passwordShort') : undefined })); setError(''); }} />
+    {fieldErrors.password ? <Text accessibilityRole="alert" style={styles.error}>{fieldErrors.password}</Text> : null}
+    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    <ActionButton label={t(loading ? 'register.loading' : 'register.button')} loading={loading} onPress={() => { void handleRegister(); }} style={{ marginTop: spacing.sm }} />
+    <Link href="/auth/login" replace style={styles.link}>{t('register.link')}</Link>
+  </AuthFrame>;
 }
-
-const createStyles = (theme: AppTheme) => {
-  const { colors } = theme;
-
-  return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  inner: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  emoji: { fontSize: 64, textAlign: 'center', marginBottom: spacing.sm },
-  title: {
-    ...typography.h1,
-    textAlign: 'center',
-    color: colors.primary,
-    marginBottom: spacing.xs,
-  },
-  subtitle: {
-    ...typography.small,
-    textAlign: 'center',
-    color: colors.textSecondary,
-    marginBottom: spacing.xl,
-  },
-  input: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    ...typography.body,
-    color: colors.textPrimary,
-  },
+const createStyles = ({ colors }: AppTheme) => StyleSheet.create({
+  title: { ...typography.h1, color: colors.textPrimary, marginBottom: spacing.sm },
+  subtitle: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.lg, lineHeight: 24 },
+  label: { ...typography.small, color: colors.textSecondary, marginBottom: spacing.xs },
+  input: { minHeight: 48, backgroundColor: colors.surface, color: colors.textPrimary, borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.md, ...typography.body },
   inputError: { borderColor: colors.danger },
-  fieldErrorText: {
-    ...typography.small,
-    color: colors.danger,
-    marginTop: -spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  fieldHintText: {
-    ...typography.small,
-    color: colors.textSecondary,
-    marginTop: -spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  button: {
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-  },
-  flexButton: { flex: 1 },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: colors.textOnPrimary, ...typography.bodyBold },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    minWidth: 96,
-  },
-  secondaryButtonText: { ...typography.bodyBold, color: colors.textPrimary },
-  actionsRow: { flexDirection: 'row', gap: spacing.sm },
-  avatarPicker: {
-    width: 112,
-    height: 112,
-    borderRadius: 56,
-    alignSelf: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    marginBottom: spacing.sm,
-  },
-  avatarImage: { width: '100%', height: '100%' },
-  avatarPlaceholder: { fontSize: 40, color: colors.primary },
-  avatarButton: { alignSelf: 'center', marginBottom: spacing.lg },
-  avatarButtonText: { ...typography.small, color: colors.primary },
-  link: {
-    marginTop: spacing.lg,
-    textAlign: 'center',
-    color: colors.primary,
-    ...typography.small,
-  },
-  });
-};
+  error: { ...typography.small, color: colors.danger, marginBottom: spacing.md },
+  link: { ...typography.body, color: colors.primary, textAlign: 'center', paddingVertical: spacing.md, marginTop: spacing.sm },
+});

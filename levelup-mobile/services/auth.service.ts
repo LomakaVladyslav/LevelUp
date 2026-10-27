@@ -1,3 +1,4 @@
+import { prepareAvatar } from './avatar';
 import api from './api';
 import { User } from '../types';
 
@@ -40,7 +41,7 @@ export const authService = {
     if (age !== undefined && age !== null) {
       formData.append('age', String(age));
     }
-    appendAvatar(formData, avatarUri);
+    if (avatarUri) appendAvatar(formData, await prepareAvatar(avatarUri));
 
     const { data } = await api.post('/auth/register', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -75,7 +76,7 @@ export const authService = {
 
   updateAvatar: async (avatarUri: string) => {
     const formData = new FormData();
-    appendAvatar(formData, avatarUri);
+    if (avatarUri) appendAvatar(formData, await prepareAvatar(avatarUri));
 
     const { data } = await api.post('/auth/me/avatar', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

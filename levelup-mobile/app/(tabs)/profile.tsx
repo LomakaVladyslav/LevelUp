@@ -1,5 +1,8 @@
+import { ActionButton, pageContent } from '../../components/ScreenUi';
+import { useScreenResource } from '../../hooks/useScreenResource';
+import { ResourceError } from '../../components/ResourceError';
 import { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../stores/auth.store';
 import { AppTheme, spacing, borderRadius, typography } from '../../constants/theme';
@@ -13,6 +16,7 @@ export default function ProfileScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const { error, refreshing, reload } = useScreenResource(() => useAuthStore.getState().refreshUser());
 
   const handleLogout = () => {
     Alert.alert(t('profile.logOut'), t('profile.logOutConfirm'), [
@@ -22,7 +26,8 @@ export default function ProfileScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void reload(); }} />} >
+      <ResourceError error={error} retry={() => { void reload(); }} />
       <UserAvatar
         username={user?.username}
         avatarUrl={user?.avatarUrl}
@@ -44,16 +49,12 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <TouchableOpacity
-        style={styles.actionButton}
-        onPress={() => router.push('/(tabs)/settings')}
-      >
-        <Text style={styles.actionText}>{t('profile.settings')}</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutText}>{t('profile.logOut')}</Text>
-      </TouchableOpacity>
+      <View style={styles.actions}>
+        <ActionButton label={t('tabs.stats')} onPress={() => router.navigate('/(tabs)/stats')} />
+        <ActionButton label={t('profile.settings')} variant="secondary" onPress={() => router.navigate('/(tabs)/settings')} />
+        <ActionButton label={t('tabs.ai')} variant="secondary" onPress={() => router.navigate('/(tabs)/ai')} />
+        <ActionButton label={t('profile.logOut')} variant="danger" onPress={handleLogout} />
+      </View>
     </ScrollView>
   );
 }
@@ -63,9 +64,10 @@ const createStyles = (theme: AppTheme) => {
 
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.xl, alignItems: 'center' },
-  username: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xs, marginTop: spacing.md },
-  email: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.xl },
+  content: { ...pageContent, paddingTop: spacing.xl, alignItems: 'center' },
+  actions: { width: '100%', gap: spacing.sm },
+  username: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xs, marginTop: spacing.md, textAlign: 'center' },
+  email: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.xl, textAlign: 'center' },
   statsRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xl, width: '100%' },
   statCard: {
     flex: 1,

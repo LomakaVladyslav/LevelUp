@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
 import {
   Modal,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,7 +25,7 @@ import { useT } from '../hooks/useT';
 import { useTheme } from '../hooks/useTheme';
 import { useSettingsStore } from '../stores/settings.store';
 
-export function LanguageSelector() {
+export function LanguageSelector({ inline = false }: { inline?: boolean }) {
   const t = useT();
   const theme = useTheme();
   const { colors } = theme;
@@ -37,19 +38,21 @@ export function LanguageSelector() {
   const selectLanguage = (nextLanguage: Language) => {
     setVisible(false);
     if (nextLanguage !== language) {
-      void setLanguage(nextLanguage);
+      void setLanguage(nextLanguage).catch(() => Alert.alert(t('common.error'), t('common.somethingWrong')));
     }
   };
 
   return (
     <>
       <TouchableOpacity
-        style={styles.headerButton}
+        style={[styles.headerButton, inline && styles.inlineButton]}
         onPress={() => setVisible(true)}
         accessibilityRole="button"
         accessibilityLabel={t('common.language')}
+        accessibilityValue={{ text: currentLanguage.name }}
       >
         <Text style={styles.headerFlag}>{currentLanguage.flag}</Text>
+        {inline ? <Text style={{ color: colors.textPrimary, ...typography.body }}>{currentLanguage.name}</Text> : null}
       </TouchableOpacity>
 
       <Modal
@@ -96,7 +99,7 @@ export function LanguageSelector() {
                     ]}
                     onPress={() => selectLanguage(option.code)}
                     accessibilityRole="radio"
-                    accessibilityState={{ selected }}
+                    accessibilityState={{ checked: selected }}
                   >
                     <Text style={styles.flag}>{option.flag}</Text>
                     <Text style={styles.languageName}>{option.name}</Text>
@@ -122,6 +125,7 @@ const createStyles = (theme: AppTheme) => {
   const { colors } = theme;
 
   return StyleSheet.create({
+  inlineButton: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.sm, alignSelf: 'flex-start' },
   headerButton: {
     minWidth: 44,
     minHeight: 44,

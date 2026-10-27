@@ -17,27 +17,27 @@ export type TodayProgress = {
   percentage: number;
 };
 
-export const normalizeTimezone = (timezone: string): string => {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
-    return timezone;
-  } catch {
-    return 'UTC';
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const formatterFor = (timezone: string): Intl.DateTimeFormat => {
+  let formatter = formatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    if (formatters.size >= 64) formatters.delete(formatters.keys().next().value!);
+    formatters.set(timezone, formatter);
   }
+  return formatter;
+};
+
+export const normalizeTimezone = (timezone: string): string => {
+  try { formatterFor(timezone); return timezone; }
+  catch { return 'UTC'; }
 };
 
 export const dateKeyInTimezone = (date: Date, timezone: string): string => {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: normalizeTimezone(timezone),
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-
-  const year = parts.find((part) => part.type === 'year')?.value;
-  const month = parts.find((part) => part.type === 'month')?.value;
-  const day = parts.find((part) => part.type === 'day')?.value;
-
+  const parts = formatterFor(normalizeTimezone(timezone)).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')!.value;
+  const month = parts.find((part) => part.type === 'month')!.value;
+  const day = parts.find((part) => part.type === 'day')!.value;
   return `${year}-${month}-${day}`;
 };
 
@@ -123,3 +123,6 @@ export const calculateTodayProgress = (
   };
 };
 
+
+export const getRequestTimezone = (req: { get: (name: string) => string | undefined }): string =>
+  normalizeTimezone(req.get('X-Timezone') ?? 'UTC');

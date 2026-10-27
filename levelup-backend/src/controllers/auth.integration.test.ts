@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 
 process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:1/never_used';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 
 const app = require('../index').default as Express;
@@ -115,6 +116,7 @@ test('login rejects invalid credentials with an auth error code', async () => {
 });
 
 test('forgot password returns generic success for unknown email', async () => {
+  stubMethod(mailService as unknown as Record<string, unknown>, 'isSmtpConfigured', () => true);
   let emailSent = false;
 
   stubMethod(
@@ -181,6 +183,7 @@ test('reset password updates password and consumes active reset tokens', async (
     usedAt: null,
     createdAt: new Date('2026-06-25T00:00:00.000Z'),
   };
+  stubMethod(prisma as unknown as Record<string, unknown>, '$queryRaw', async () => [{ id: user.id }]);
   let updatedHash = '';
   let consumedTokens = false;
 

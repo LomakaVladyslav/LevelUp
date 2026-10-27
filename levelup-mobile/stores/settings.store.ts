@@ -1,3 +1,4 @@
+import { apiContext } from '../services/api-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { isLanguage, Language } from '../constants/i18n';
@@ -37,6 +38,7 @@ function createSettingsStore() {
           AsyncStorage.getItem(NOTIFICATIONS_ENABLED_KEY),
         ]);
 
+        apiContext.setLanguage(isLanguage(storedLanguage) ? storedLanguage : 'en');
         set({
           language: isLanguage(storedLanguage) ? storedLanguage : 'en',
           themeMode: isThemeMode(storedThemeMode) ? storedThemeMode : 'light',
@@ -50,16 +52,20 @@ function createSettingsStore() {
     },
 
     setLanguage: async (language) => {
-      set({ language });
       await AsyncStorage.setItem(LANGUAGE_KEY, language);
+      apiContext.setLanguage(language);
+      set({ language });
+      if (!apiContext.get().token) return;
 
+      const session = apiContext.get().sessionVersion;
       const reminderUpdates: Promise<unknown>[] = [
-        plannedActivityService.getAll().then(({ plannedActivities }) =>
-          notificationService.rescheduleExistingActivityReminders(
+        plannedActivityService.getAll().then(({ plannedActivities }) => {
+          if (session !== apiContext.get().sessionVersion || get().language !== language) return;
+          return notificationService.rescheduleExistingActivityReminders(
             plannedActivities,
             language,
-          ),
-        ),
+          );
+        }),
       ];
 
       if (get().notificationsEnabled) {
@@ -77,8 +83,8 @@ function createSettingsStore() {
     },
 
     setThemeMode: async (themeMode) => {
-      set({ themeMode });
       await AsyncStorage.setItem(THEME_MODE_KEY, themeMode);
+      set({ themeMode });
     },
 
     setNotificationsEnabled: async (enabled) => {

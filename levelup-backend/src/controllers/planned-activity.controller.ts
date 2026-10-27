@@ -1,15 +1,10 @@
 import { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
 import prisma from '../utils/prisma';
-import { awardXP } from '../services/xp.service';
-import { updateStreak } from '../services/streak.service';
-import { checkAndUnlockAchievements } from '../services/achievement.service';
-import { calculateAdaptiveXp } from '../services/adaptive-xp.service';
-import {
-  localizeActivities,
-  localizePlannedActivities,
-  sourceTextHash,
-} from '../services/content-translation.service';
+import { completeActivity } from '../services/completion.service';
+import { runMutation, withUserLock } from '../services/user-mutation.service';
+import { localizePlannedActivities } from '../services/content-translation.service';
+import { dateOnly, textField } from '../utils/validation';
+import { HttpError, sendError } from '../utils/http-error';
 import { getRequestLocale } from '../utils/locale';
 import {
   calculateActivityStreak,
@@ -17,6 +12,7 @@ import {
   dateFromKey,
   dateKeyInTimezone,
   normalizeTimezone,
+  getRequestTimezone,
 } from '../services/planned-activity-metrics.service';
 
 const validTypes = ['STUDY', 'WORKOUT', 'HABIT', 'CUSTOM'] as const;
@@ -65,27 +61,16 @@ const isEditableStatus = (value: unknown): value is EditableStatusInput =>
   typeof value === 'string' && validStatuses.includes(value as EditableStatusInput);
 
 const parseDueTimeMinutes = (value: unknown): number | null | undefined => {
-  if (value === undefined) return undefined;
+  if (value === undefined) return null;
   if (value === null || value === '') return null;
 
-  const parsed = typeof value === 'number' ? value : Number(value);
+  if (typeof value !== 'number') return undefined;
+  const parsed = value;
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1439) return undefined;
   return parsed;
 };
 
-const parseDueDate = (value: unknown): Date | null | undefined => {
-  if (value === undefined) return undefined;
-  if (value === null || value === '') return null;
-
-  if (typeof value !== 'string') return undefined;
-
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? `${value}T00:00:00.000Z`
-    : value;
-  const date = new Date(dateOnly);
-
-  return Number.isNaN(date.getTime()) ? undefined : date;
-};
+const parseDueDate = dateOnly;
 
 const validateCreatePayload = (payload: unknown): {
   data?: PlannedActivityData;
@@ -93,7 +78,7 @@ const validateCreatePayload = (payload: unknown): {
 } => {
   if (!isRecord(payload)) return { error: 'Activity payload must be an object' };
 
-  const title = cleanText(payload.title);
+  const title = textField(payload.title, 'Title', 200, true);
   if (!title) return { error: 'Title is required' };
 
   if (!isActivityType(payload.type)) {
@@ -121,80 +106,20 @@ const validateCreatePayload = (payload: unknown): {
     return { error: 'Due date is required for date-based activities' };
   }
 
+  if (payload.timezone !== undefined && (typeof payload.timezone !== 'string' || normalizeTimezone(payload.timezone) !== payload.timezone)) return { error: 'Invalid timezone' };
+
   return {
     data: {
       type: payload.type,
       title,
-      description: cleanText(payload.description),
-      motivationText: cleanText(payload.motivationText),
+      description: textField(payload.description, 'Description', 5000),
+      motivationText: textField(payload.motivationText, 'Motivation text', 300),
       scheduleType,
       dueDate: scheduleType === 'DATE' ? parsedDueDate : null,
       dueTimeMinutes: dueTimeMinutes ?? null,
       timezone: normalizeTimezone(cleanText(payload.timezone) ?? 'UTC'),
     },
   };
-};
-
-const addDailyCompletionState = async <T extends {
-  id: string;
-  userId: string;
-  scheduleType: string;
-  status: string;
-  timezone: string;
-}>(plannedActivities: T[]) => {
-  const dailyActivities = plannedActivities.filter(
-    (activity) => activity.scheduleType === 'DAILY' && activity.status === 'ACTIVE',
-  );
-
-  if (dailyActivities.length === 0) {
-    return plannedActivities.map((activity) => ({
-      ...activity,
-      isCompletedToday: false,
-      completedTodayAt: null,
-    }));
-  }
-
-  const dateByActivityId = new Map<string, Date>();
-  const completionDates: Date[] = [];
-
-  for (const activity of dailyActivities) {
-    const date = dateFromKey(dateKeyInTimezone(new Date(), activity.timezone));
-    dateByActivityId.set(activity.id, date);
-    completionDates.push(date);
-  }
-
-  const completions = await prisma.activity.findMany({
-    where: {
-      userId: plannedActivities[0]?.userId,
-      plannedActivityId: { in: dailyActivities.map((activity) => activity.id) },
-      completedForDate: { in: completionDates },
-    },
-    select: {
-      plannedActivityId: true,
-      completedForDate: true,
-      completedAt: true,
-    },
-  });
-
-  const completionByKey = new Map(
-    completions.map((activity) => [
-      `${activity.plannedActivityId}:${activity.completedForDate?.toISOString()}`,
-      activity.completedAt,
-    ]),
-  );
-
-  return plannedActivities.map((activity) => {
-    const completedForDate = dateByActivityId.get(activity.id);
-    const completedTodayAt = completedForDate
-      ? completionByKey.get(`${activity.id}:${completedForDate.toISOString()}`) ?? null
-      : null;
-
-    return {
-      ...activity,
-      isCompletedToday: Boolean(completedTodayAt),
-      completedTodayAt,
-    };
-  });
 };
 
 export const getPlannedActivities = async (
@@ -204,9 +129,11 @@ export const getPlannedActivities = async (
   try {
     const locale = getRequestLocale(req);
     const includeInactive = req.query.includeInactive === 'true';
+    const includeDisabled = req.query.includeDisabled === 'true';
+    const { activitiesWithMetrics, metricActivities, completions, now } = await prisma.$transaction(async (tx) => {
     const now = new Date();
 
-    const metricActivities = await prisma.plannedActivity.findMany({
+    const metricActivities = await tx.plannedActivity.findMany({
       where: {
         userId: req.user.id,
         ...(includeInactive
@@ -214,7 +141,8 @@ export const getPlannedActivities = async (
           : {
               OR: [
                 { status: 'ACTIVE' },
-                { status: 'COMPLETED', scheduleType: 'DATE' },
+                ...(includeDisabled ? [{ status: 'DISABLED' as const }] : []),
+                { status: 'COMPLETED', scheduleType: 'DATE', dueDate: { gte: new Date(now.getTime() - 2 * 86400000), lte: new Date(now.getTime() + 2 * 86400000) } },
               ],
           }),
       },
@@ -227,7 +155,7 @@ export const getPlannedActivities = async (
 
     const visibleActivities = includeInactive
       ? metricActivities
-      : metricActivities.filter((activity) => activity.status === 'ACTIVE');
+      : metricActivities.filter((activity) => activity.status === 'ACTIVE' || (includeDisabled && activity.status === 'DISABLED'));
     const dailyActivities = visibleActivities.filter(
       (activity) => activity.scheduleType === 'DAILY',
     );
@@ -258,7 +186,7 @@ export const getPlannedActivities = async (
 
     const [streakCompletions, progressCompletions] = await Promise.all([
       dailyActivities.length > 0
-        ? prisma.activity.findMany({
+        ? tx.activity.findMany({
             where: {
               userId: req.user.id,
               plannedActivityId: {
@@ -274,7 +202,7 @@ export const getPlannedActivities = async (
           })
         : Promise.resolve([]),
       progressCompletionTargets.length > 0
-        ? prisma.activity.findMany({
+        ? tx.activity.findMany({
             where: {
               userId: req.user.id,
               plannedActivityId: {
@@ -341,6 +269,9 @@ export const getPlannedActivities = async (
       };
     });
 
+      return { activitiesWithMetrics, metricActivities, completions, now };
+    }, { isolationLevel: 'RepeatableRead', timeout: 10000 });
+
     res.json({
       plannedActivities: await localizePlannedActivities(
         activitiesWithMetrics,
@@ -358,400 +289,83 @@ export const getPlannedActivities = async (
   }
 };
 
-export const createPlannedActivity = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+export const createPlannedActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const locale = getRequestLocale(req);
     const { data, error } = validateCreatePayload(req.body);
-    if (!data) {
-      res.status(400).json({ error });
-      return;
-    }
-
-    const plannedActivity = await prisma.plannedActivity.create({
-      data: {
-        userId: req.user.id,
-        ...data,
-      },
+    if (!data) throw new HttpError(400, error!);
+    const result = await runMutation(req, async (tx) => {
+      const plannedActivity = await tx.plannedActivity.create({ data: { userId: req.user.id, ...data } });
+      return { plannedActivity: displayPlanned(plannedActivity) };
     });
-
-    const [localizedActivity] = await localizePlannedActivities(
-      [{ ...plannedActivity, translations: [] }],
-      locale,
-    );
-    res.status(201).json({ plannedActivity: localizedActivity });
-  } catch (error) {
-    console.error('Create planned activity error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    res.status(201).json(result);
+  } catch (error) { sendError(res, error); }
 };
 
-export const createPlannedActivitiesBulk = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const displayPlanned = <T extends { title: string; description: string | null; motivationText: string | null }>(activity: T) => ({
+  ...activity, displayTitle: activity.title, displayDescription: activity.description, displayMotivationText: activity.motivationText,
+});
+
+export const createPlannedActivitiesBulk = async (req: Request, res: Response): Promise<void> => {
   try {
-    const locale = getRequestLocale(req);
-    const activities = req.body.activities;
-    if (!Array.isArray(activities) || activities.length === 0) {
-      res.status(400).json({ error: 'Activities are required' });
-      return;
-    }
-
-    if (activities.length > 20) {
-      res.status(400).json({ error: 'A maximum of 20 activities can be created at once' });
-      return;
-    }
-
+    const activities = req.body?.activities;
+    if (!Array.isArray(activities) || !activities.length || activities.length > 20) throw new HttpError(400, 'Supply between 1 and 20 activities');
     const validated = activities.map(validateCreatePayload);
     const invalid = validated.find((result) => !result.data);
-    if (invalid) {
-      res.status(400).json({ error: invalid.error });
-      return;
-    }
-
-    const plannedActivities = await prisma.$transaction(
-      validated.map((result) =>
-        prisma.plannedActivity.create({
-          data: {
-            userId: req.user.id,
-            ...result.data!,
-          },
-        }),
-      ),
-    );
-
-    res.status(201).json({
-      plannedActivities: await localizePlannedActivities(
-        plannedActivities.map((activity) => ({
-          ...activity,
-          translations: [],
-        })),
-        locale,
-      ),
+    if (invalid) throw new HttpError(400, invalid.error!);
+    const result = await runMutation(req, async (tx) => {
+      const plannedActivities = [];
+      for (const item of validated) {
+        plannedActivities.push(displayPlanned(await tx.plannedActivity.create({ data: { userId: req.user.id, ...item.data! } })));
+      }
+      return { plannedActivities };
     });
-  } catch (error) {
-    console.error('Create planned activities bulk error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    res.status(201).json(result);
+  } catch (error) { sendError(res, error); }
 };
 
-export const updatePlannedActivity = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+export const updatePlannedActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const locale = getRequestLocale(req);
-    const plannedActivity = await prisma.plannedActivity.findFirst({
-      where: { id: req.params.id, userId: req.user.id },
+    if (!isRecord(req.body)) throw new HttpError(400, 'Update payload must be an object');
+    const result = await runMutation(req, async (tx) => {
+      const existing = await tx.plannedActivity.findFirst({ where: { id: req.params.id, userId: req.user.id } });
+      if (!existing) throw new HttpError(404, 'Planned activity not found', 'NOT_FOUND');
+      if (existing.status === 'COMPLETED') throw new HttpError(409, 'Completed planned activities cannot be edited', 'ACTIVITY_ALREADY_COMPLETED');
+      if (req.body.updatedAt !== undefined && req.body.updatedAt !== existing.updatedAt.toISOString()) {
+        throw new HttpError(409, 'This activity has changed. Reload it before editing.', 'ACTIVITY_CHANGED');
+      }
+      const editable = ['type', 'title', 'description', 'motivationText', 'scheduleType', 'dueDate', 'dueTimeMinutes', 'timezone'];
+      const supplied = Object.fromEntries(Object.entries(req.body).filter(([key]) => editable.includes(key)));
+      const { data, error } = validateCreatePayload({ ...existing, dueDate: existing.dueDate?.toISOString() ?? null, ...supplied });
+      if (!data) throw new HttpError(400, error!);
+      const status = req.body.status ?? existing.status;
+      if (!isEditableStatus(status) || (status === 'DISABLED' && data.scheduleType !== 'DAILY')) throw new HttpError(400, 'Only daily activities can be disabled');
+      const activity = await tx.plannedActivity.update({ where: { id: existing.id }, data: {
+        ...data, status, disabledAt: status === 'DISABLED' ? existing.disabledAt ?? new Date() : null,
+      } });
+      if (data.title !== existing.title || data.description !== existing.description || data.motivationText !== existing.motivationText) {
+        await tx.plannedActivityTranslation.deleteMany({ where: { plannedActivityId: existing.id } });
+      }
+      return { plannedActivity: displayPlanned(activity) };
     });
-
-    if (!plannedActivity) {
-      res.status(404).json({ error: 'Planned activity not found' });
-      return;
-    }
-
-    if (plannedActivity.status === 'COMPLETED') {
-      res.status(400).json({ error: 'Completed planned activities cannot be edited' });
-      return;
-    }
-
-    if (!isRecord(req.body)) {
-      res.status(400).json({ error: 'Update payload must be an object' });
-      return;
-    }
-
-    const updateData: Prisma.PlannedActivityUpdateInput = {};
-
-    if (req.body.title !== undefined) {
-      const title = cleanText(req.body.title);
-      if (!title) {
-        res.status(400).json({ error: 'Title is required' });
-        return;
-      }
-      updateData.title = title;
-    }
-
-    if (req.body.description !== undefined) {
-      updateData.description = cleanText(req.body.description);
-    }
-
-    if (req.body.motivationText !== undefined) {
-      updateData.motivationText = cleanText(req.body.motivationText);
-    }
-
-    if (req.body.type !== undefined) {
-      if (!isActivityType(req.body.type)) {
-        res.status(400).json({ error: `Type must be one of: ${validTypes.join(', ')}` });
-        return;
-      }
-      updateData.type = req.body.type;
-    }
-
-    const nextScheduleType = req.body.scheduleType === undefined
-      ? plannedActivity.scheduleType
-      : isScheduleType(req.body.scheduleType)
-        ? req.body.scheduleType
-        : null;
-
-    if (!nextScheduleType) {
-      res.status(400).json({ error: `Schedule type must be one of: ${validScheduleTypes.join(', ')}` });
-      return;
-    }
-
-    if (req.body.scheduleType !== undefined) {
-      updateData.scheduleType = nextScheduleType;
-    }
-
-    if (req.body.dueTimeMinutes !== undefined) {
-      const dueTimeMinutes = parseDueTimeMinutes(req.body.dueTimeMinutes);
-      if (dueTimeMinutes === undefined) {
-        res.status(400).json({ error: 'Due time must be a whole number between 0 and 1439 minutes' });
-        return;
-      }
-      updateData.dueTimeMinutes = dueTimeMinutes;
-    }
-
-    if (req.body.timezone !== undefined) {
-      updateData.timezone = normalizeTimezone(cleanText(req.body.timezone) ?? 'UTC');
-    }
-
-    if (nextScheduleType === 'DATE') {
-      if (req.body.dueDate !== undefined) {
-        const dueDate = parseDueDate(req.body.dueDate);
-        if (dueDate === undefined) {
-          res.status(400).json({ error: 'Due date must be a valid date' });
-          return;
-        }
-        if (dueDate === null) {
-          res.status(400).json({ error: 'Due date is required for date-based activities' });
-          return;
-        }
-        updateData.dueDate = dueDate;
-      } else if (!plannedActivity.dueDate) {
-        res.status(400).json({ error: 'Due date is required for date-based activities' });
-        return;
-      }
-    } else {
-      updateData.dueDate = null;
-    }
-
-    if (req.body.status !== undefined) {
-      if (!isEditableStatus(req.body.status)) {
-        res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
-        return;
-      }
-
-      if (req.body.status === 'DISABLED' && nextScheduleType !== 'DAILY') {
-        res.status(400).json({ error: 'Only daily activities can be disabled' });
-        return;
-      }
-
-      updateData.status = req.body.status;
-      updateData.disabledAt = req.body.status === 'DISABLED' ? new Date() : null;
-    }
-
-    const textChanged =
-      req.body.title !== undefined ||
-      req.body.description !== undefined ||
-      req.body.motivationText !== undefined;
-    await prisma.$transaction(async (tx) => {
-      await tx.plannedActivity.update({
-        where: { id: req.params.id },
-        data: updateData,
-      });
-
-      if (textChanged) {
-        await tx.plannedActivityTranslation.deleteMany({
-          where: { plannedActivityId: req.params.id },
-        });
-      }
-    });
-
-    const updated = await prisma.plannedActivity.findUniqueOrThrow({
-      where: { id: req.params.id },
-      include: translationInclude(locale),
-    });
-    const [plannedWithState] = await addDailyCompletionState([updated]);
-    const [localizedActivity] = await localizePlannedActivities(
-      [plannedWithState],
-      locale,
-    );
-    res.json({ plannedActivity: localizedActivity });
-  } catch (error) {
-    console.error('Update planned activity error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    res.json(result);
+  } catch (error) { sendError(res, error); }
 };
 
-export const deletePlannedActivity = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+export const deletePlannedActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const plannedActivity = await prisma.plannedActivity.findFirst({
-      where: { id: req.params.id, userId: req.user.id },
-    });
-
-    if (!plannedActivity) {
-      res.status(404).json({ error: 'Planned activity not found' });
-      return;
-    }
-
-    await prisma.plannedActivity.delete({ where: { id: req.params.id } });
+    await withUserLock(req.user.id, async (tx) => {
+      // Deleting a plan preserves completed history and earned rewards.
+      await tx.plannedActivity.deleteMany({ where: { id: req.params.id, userId: req.user.id } });
+    }, req.user.sessionVersion);
     res.json({ message: 'Planned activity deleted' });
-  } catch (error) {
-    console.error('Delete planned activity error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  } catch (error) { sendError(res, error); }
 };
 
-export const completePlannedActivity = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+export const completePlannedActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const locale = getRequestLocale(req);
-    const plannedActivity = await prisma.plannedActivity.findFirst({
-      where: { id: req.params.id, userId: req.user.id },
-      include: translationInclude(locale),
-    });
-
-    if (!plannedActivity) {
-      res.status(404).json({ error: 'Planned activity not found' });
-      return;
-    }
-
-    if (plannedActivity.status === 'DISABLED') {
-      res.status(400).json({ error: 'Disabled activities cannot be completed' });
-      return;
-    }
-
-    if (plannedActivity.status === 'COMPLETED') {
-      res.status(409).json({ error: 'This activity is already completed' });
-      return;
-    }
-
-    const completedAt = new Date();
-    const xpBreakdown = await calculateAdaptiveXp(
-      req.user.id,
-      plannedActivity.type,
-      completedAt,
-    );
-    const xpEarned = xpBreakdown.totalXp;
-    const completedForDate = dateFromKey(
-      dateKeyInTimezone(completedAt, plannedActivity.timezone),
-    );
-
-    const activity = await prisma.$transaction(async (tx) => {
-      if (plannedActivity.scheduleType === 'DAILY') {
-        const existingCompletion = await tx.activity.findFirst({
-          where: {
-            userId: req.user.id,
-            plannedActivityId: plannedActivity.id,
-            completedForDate,
-          },
-        });
-
-        if (existingCompletion) {
-          throw new Error('DAILY_ALREADY_COMPLETED');
-        }
-      }
-
-      const createdActivity = await tx.activity.create({
-        data: {
-          userId: req.user.id,
-          plannedActivityId: plannedActivity.id,
-          completedForDate,
-          type: plannedActivity.type,
-          title: plannedActivity.title,
-          description: plannedActivity.description,
-          xpEarned,
-          completedAt,
-        },
-      });
-
-      const plannedSourceHash = sourceTextHash(
-        plannedActivity.title,
-        plannedActivity.description,
-        plannedActivity.motivationText,
-      );
-      const activitySourceHash = sourceTextHash(
-        plannedActivity.title,
-        plannedActivity.description,
-      );
-      const currentTranslations = plannedActivity.translations.filter(
-        (translation) => translation.sourceHash === plannedSourceHash,
-      );
-
-      if (currentTranslations.length > 0) {
-        await tx.activityTranslation.createMany({
-          data: currentTranslations.map((translation) => ({
-            activityId: createdActivity.id,
-            locale: translation.locale,
-            title: translation.title,
-            description: translation.description,
-            sourceHash: activitySourceHash,
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      if (plannedActivity.scheduleType !== 'DAILY') {
-        await tx.plannedActivity.update({
-          where: { id: plannedActivity.id },
-          data: { status: 'COMPLETED', completedAt },
-        });
-      }
-
-      return createdActivity;
-    });
-
-    const xpResult = await awardXP(req.user.id, xpEarned, 'activity_completed');
-    const streakResult = await updateStreak(req.user.id);
-    const newAchievements = await checkAndUnlockAchievements(
-      req.user.id,
-      locale,
-    );
-    const activityWithTranslations = await prisma.activity.findUniqueOrThrow({
-      where: { id: activity.id },
-      include: translationInclude(locale),
-    });
-    const [localizedActivity] = await localizeActivities(
-      [activityWithTranslations],
-      locale,
-    );
-
-    res.status(201).json({
-      activity: localizedActivity,
-      xpGained: xpResult.xpGained,
-      xpBreakdown,
-      levelUp: xpResult.levelUp,
-      newLevel: xpResult.newLevel,
-      streak: {
-        current: streakResult.currentCount,
-        longest: streakResult.longestCount,
-        isNewRecord: streakResult.isNewRecord,
-      },
-      newAchievements,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'DAILY_ALREADY_COMPLETED') {
-      res.status(409).json({ error: 'This daily activity is already completed today' });
-      return;
-    }
-
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
-      res.status(409).json({ error: 'This daily activity is already completed today' });
-      return;
-    }
-
-    console.error('Complete planned activity error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    const result = await runMutation(req, (tx) => completeActivity(tx, {
+      userId: req.user.id, locale: getRequestLocale(req), timezone: getRequestTimezone(req), plannedActivityId: req.params.id, completionDate: req.body?.completionDate,
+    }));
+    res.status(201).json(result);
+  } catch (error) { sendError(res, error); }
 };

@@ -1,8 +1,7 @@
 import axios from "axios";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { isLanguage } from "../constants/i18n";
+import { apiContext, getDeviceTimezone } from "./api-context";
 
-export const DEFAULT_API_BASE_URL = "http://192.168.28.61:3000/api";
+export const DEFAULT_API_BASE_URL = "http://localhost:3000/api";
 const isProduction = process.env.NODE_ENV === "production";
 
 export const normalizeApiBaseUrl = (url?: string | null) => {
@@ -17,10 +16,14 @@ export const normalizeApiBaseUrl = (url?: string | null) => {
     return DEFAULT_API_BASE_URL;
   }
 
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
-  return withoutTrailingSlash.endsWith("/api")
-    ? withoutTrailingSlash
-    : `${withoutTrailingSlash}/api`;
+  let parsed: URL;
+  try { parsed = new URL(trimmed); }
+  catch { throw new Error("API URL must be a valid HTTP(S) origin."); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || !['', '/', '/api', '/api/'].includes(parsed.pathname)) {
+    throw new Error("API URL must be an HTTP(S) origin, optionally ending in /api.");
+  }
+  if (isProduction && parsed.protocol !== 'https:') throw new Error("Production API URL must use HTTPS.");
+  return `${parsed.origin}/api`;
 };
 
 export const API_BASE_URL = normalizeApiBaseUrl(
@@ -49,7 +52,7 @@ const logApiError = (error: unknown) => {
     baseURL: config?.baseURL ?? API_BASE_URL,
     status: error.response?.status ?? null,
     message: error.message,
-    response: error.response?.data ?? null,
+
   });
 };
 
@@ -65,28 +68,22 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Automatically attach the JWT token to every request
-api.interceptors.request.use(async (config) => {
-  const [token, language] = await Promise.all([
-    AsyncStorage.getItem("token"),
-    AsyncStorage.getItem("language"),
-  ]);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  config.headers["Accept-Language"] = isLanguage(language) ? language : "en";
+// Session and language are hydrated once, before protected screens mount.
+api.interceptors.request.use((config) => {
+  const { token, language } = apiContext.get();
+  const publicAuth = /^\/auth\/(login|register|availability|forgot-password|reset-password)$/.test(config.url ?? '');
+  if (token && !publicAuth && !config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`;
+  config.headers['Accept-Language'] = language;
+  config.headers['X-Timezone'] = getDeviceTimezone();
   return config;
 });
 
-// Handle 401 errors globally (token expired)
 api.interceptors.response.use(
   (response) => response,
-  async (error) => {
+  (error) => {
     logApiError(error);
-
     if (error.response?.status === 401) {
-      await AsyncStorage.removeItem("token");
-      // The app will detect the missing token and redirect to login
+      apiContext.expire(error.config?.headers?.Authorization);
     }
     return Promise.reject(error);
   },

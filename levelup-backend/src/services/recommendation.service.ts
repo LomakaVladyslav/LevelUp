@@ -1,5 +1,6 @@
 import { ActivityType } from '@prisma/client';
 import prisma from '../utils/prisma';
+import { dateFromKey, dateKeyInTimezone } from './planned-activity-metrics.service';
 import { xpProgressInCurrentLevel } from '../utils/constants';
 
 const CORE_ACTIVITY_TYPES: ActivityType[] = ['STUDY', 'WORKOUT', 'HABIT'];
@@ -24,7 +25,7 @@ export interface Recommendation {
 
 const startOfLocalDay = (date: Date): Date => {
   const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
+  result.setUTCHours(0, 0, 0, 0);
   return result;
 };
 
@@ -41,6 +42,7 @@ const categoryLabel = (type: ActivityType): string =>
 export const generateRecommendations = async (
   userId: string,
   now = new Date(),
+  timezone = 'UTC',
 ): Promise<Recommendation[]> => {
   const currentPeriodStart = new Date(now.getTime() - 7 * DAY_IN_MS);
   const previousPeriodStart = new Date(now.getTime() - 14 * DAY_IN_MS);
@@ -72,11 +74,11 @@ export const generateRecommendations = async (
     (activity) => activity.completedAt < currentPeriodStart,
   );
   const completedToday = currentActivities.some(
-    (activity) => calendarDayDifference(now, activity.completedAt) === 0,
+    (activity) => dateKeyInTimezone(now, timezone) === dateKeyInTimezone(activity.completedAt, timezone),
   );
 
   const daysSinceStreakActivity = streak?.lastActivityDate
-    ? calendarDayDifference(now, streak.lastActivityDate)
+    ? calendarDayDifference(dateFromKey(dateKeyInTimezone(now, timezone)), streak.lastActivityDate)
     : null;
   const activeStreak =
     daysSinceStreakActivity !== null && daysSinceStreakActivity <= 1
@@ -175,7 +177,7 @@ export const generateRecommendations = async (
     });
   }
 
-  if (recommendations.length === 0) {
+  if (recommendations.length === 0 && !completedToday) {
     recommendations.push({
       id: 'start-today',
       code: 'START_TODAY',
