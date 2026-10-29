@@ -1,3 +1,4 @@
+import { undoCompletion } from '../services/completion-undo.service';
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { completeActivity } from '../services/completion.service';
@@ -108,4 +109,10 @@ export const deleteActivity = async (
   } catch (error) {
     sendError(res, error);
   }
+};
+
+export const undoActivity = async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.json(await runMutation(req, (tx) => undoCompletion(tx, req.user.id, req.params.id)));
+  } catch (error) { sendError(res, error); }
 };

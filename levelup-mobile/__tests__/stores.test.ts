@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/settings.store';
 import { authService } from '../services/auth.service';
 import { notificationService } from '../services/notification.service';
 import { plannedActivityService } from '../services/plannedActivity.service';
+import { invalidateData } from '../stores/data.store';
 
 jest.mock('../services/auth.service', () => ({
   authService: {
@@ -20,6 +21,7 @@ jest.mock('../services/plannedActivity.service', () => ({
 
 jest.mock('../services/notification.service', () => ({
   notificationService: {
+    reconcileReminders: jest.fn(async () => undefined),
     cancelAllReminders: jest.fn(async () => undefined),
     cancelDailyReminder: jest.fn(async () => undefined),
     requestPermission: jest.fn(async () => true),
@@ -86,7 +88,7 @@ test('settings store loads saved values and reschedules reminders after language
     [],
     'de',
   );
-  expect(notificationService.scheduleDailyReminder).toHaveBeenCalledWith('de');
+  expect(notificationService.rescheduleExistingActivityReminders).toHaveBeenCalledTimes(1);
 });
 
 test('legacy sessions migrate to one secure item and remove the plaintext token', async () => {
@@ -115,7 +117,7 @@ test('an older profile response cannot overwrite a newer XP update', async () =>
   let resolve!: (value: typeof user) => void;
   jest.mocked(authService.getMe).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
   const refresh = useAuthStore.getState().refreshUser();
-  await useAuthStore.getState().setUser({ ...user, xp: 200 });
+  await useAuthStore.getState().setUser({ ...user, xp: 200 }, true);
   resolve({ ...user, xp: 50 });
   await refresh;
   expect(useAuthStore.getState().user?.xp).toBe(200);
@@ -151,4 +153,44 @@ test('invalid stored JSON does not leave startup loading forever', async () => {
   await useAuthStore.getState().loadFromStorage();
   expect(useAuthStore.getState().isLoading).toBe(false);
   expect(useAuthStore.getState().user).toBeNull();
+});
+
+
+test('late profile save cannot restore XP revoked by Undo', async () => {
+  await useAuthStore.getState().setAuth('token', { ...user, xp: 90 });
+  jest.mocked(authService.getMe).mockResolvedValue({ ...user, xp: 0 });
+  await useAuthStore.getState().refreshUser();
+  await useAuthStore.getState().setUser({ ...user, xp: 90, avatarUrl: '/api/avatars/new' });
+  expect(useAuthStore.getState().user).toMatchObject({ xp: 0, avatarUrl: '/api/avatars/new' });
+});
+
+test('language-change reminder read cannot restore tasks changed while it was pending', async () => {
+  await useAuthStore.getState().setAuth('token', user);
+  let finish!: (value: any) => void;
+  let started!: () => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  jest.mocked(plannedActivityService.getAll).mockImplementationOnce(() => {
+    started(); return new Promise(resolve => { finish = resolve; });
+  });
+  const pending = useSettingsStore.getState().setLanguage('uk');
+  await reading;
+  invalidateData(); finish({ plannedActivities: [{ id: 'deleted' }] });
+  await pending;
+  expect(notificationService.rescheduleExistingActivityReminders).not.toHaveBeenCalled();
+});
+
+test('enabling notifications discards obsolete tasks and leaves fresh reconciliation to the root', async () => {
+  await useAuthStore.getState().setAuth('token', user);
+  let finish!: (value: any) => void;
+  let started!: () => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  jest.mocked(plannedActivityService.getAll).mockImplementationOnce(() => {
+    started(); return new Promise(resolve => { finish = resolve; });
+  });
+  const pending = useSettingsStore.getState().setNotificationsEnabled(true);
+  await reading;
+  invalidateData(); finish({ plannedActivities: [{ id: 'paused' }] });
+  await pending;
+  expect(notificationService.reconcileReminders).not.toHaveBeenCalled();
+  expect(useSettingsStore.getState().notificationsEnabled).toBe(true);
 });

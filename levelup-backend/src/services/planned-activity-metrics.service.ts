@@ -1,6 +1,10 @@
+import { scheduledOn } from './recurrence.service';
 export type PlannedActivityMetricInput = {
+  weekdays?: number[];
+  scheduleHistory?: unknown;
+  createdAt?: Date;
   id: string;
-  scheduleType: 'SIMPLE' | 'DAILY' | 'DATE';
+  scheduleType: 'SIMPLE' | 'DAILY' | 'WEEKLY' | 'DATE';
   status: 'ACTIVE' | 'COMPLETED' | 'DISABLED';
   dueDate: Date | null;
   timezone: string;
@@ -103,7 +107,7 @@ export const calculateTodayProgress = (
 
     const todayDateKey = dateKeyInTimezone(now, activity.timezone);
     const dueToday =
-      activity.scheduleType === 'DAILY' ||
+      scheduledOn(activity, todayDateKey) ||
       (activity.scheduleType === 'DATE' &&
         activity.dueDate !== null &&
         dateKeyFromStoredDate(activity.dueDate) === todayDateKey);

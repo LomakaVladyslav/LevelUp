@@ -4,6 +4,7 @@ import { mutate } from './mutation';
 import { Activity, ActivityResult, ActivityType } from '../types';
 
 export const activityService = {
+  undo: (id: string) => mutate<{ activityId: string; undone: boolean; totalXp: number; newLevel: number }>('post', `/activities/${id}/undo`),
   create: async (data: {
     type: ActivityType;
     title: string;

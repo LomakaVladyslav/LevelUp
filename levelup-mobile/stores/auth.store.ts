@@ -12,7 +12,7 @@ interface AuthStore {
   user: User | null;
   isLoading: boolean;
   setAuth: (token: string, user: User) => Promise<void>;
-  setUser: (user: User) => Promise<void>;
+  setUser: (user: User, authoritative?: boolean) => Promise<void>;
   refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -49,11 +49,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     apiContext.setToken(token, user.id);
     set({ token, user, isLoading: false });
   },
-  setUser: async (user) => {
+  setUser: async (user, authoritative = false) => {
     if (!get().token || get().user?.id !== user.id) return;
-    // Profile saves can arrive after a newer completion response. Rewards are
-    // monotonic; an older profile snapshot must not roll back displayed progress.
-    user = { ...user, xp: Math.max(user.xp, get().user!.xp), level: Math.max(user.level, get().user!.level) };
+    // Profile save responses can be stale; a revision-checked refresh is authoritative
+    // and must accept lower XP/level after a server-side Undo.
+    if (!authoritative) user = { ...user, xp: get().user!.xp, level: get().user!.level };
     ++userRevision;
     const version = generation;
     const token = get().token!;
@@ -68,7 +68,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const revision = ++userRevision;
     const user = await authService.getMe();
     if (version !== generation || revision !== userRevision) return;
-    await get().setUser(user);
+    await get().setUser(user, true);
   },
   logout: async () => {
     ++generation;
@@ -137,7 +137,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
   updateUser: (updates) => {
     const user = get().user;
-    if (user) void get().setUser({ ...user, ...updates, id: user.id });
+    if (user) void get().setUser({ ...user, ...updates, id: user.id }, true);
   },
 }));
 

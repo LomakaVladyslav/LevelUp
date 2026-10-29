@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settings.store';
 import { userData } from '../services/user-data';
 import { authService } from '../services/auth.service';
 import { notificationService } from '../services/notification.service';
+jest.mock('../services/plannedActivity.service', () => ({ plannedActivityService: { getAll: jest.fn(async () => ({ plannedActivities: [] })) } }));
 jest.mock('../services/auth.service', () => ({ authService: { deleteMe: jest.fn() } }));
 const user = (id: string) => ({ id, username: 'Owner', email: 'owner@example.test', xp: 0, level: 1 });
 beforeEach(async () => {

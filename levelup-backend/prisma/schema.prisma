@@ -28,6 +28,7 @@ model User {
   goals            Goal[]
   passwordResetTokens PasswordResetToken[]
   mutationReceipts MutationReceipt[]
+  completionUndos CompletionUndo[]
   avatar Avatar?
 }
 
@@ -38,6 +39,14 @@ model Avatar {
   contentType String
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CompletionUndo {
+  activityId String @id
+  userId String
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
 }
 
 model MutationReceipt {
@@ -72,6 +81,8 @@ model Activity {
   type        ActivityType
   title       String
   description String?
+  streakDate DateTime?
+  goalContributions Json @default("[]")
   xpEarned    Int
   hiddenAt    DateTime?
   duration    Int?
@@ -118,6 +129,8 @@ model PlannedActivity {
   description    String?
   motivationText String?
   scheduleType   PlannedActivityScheduleType @default(SIMPLE)
+  weekdays       Int[] @default([])
+  scheduleHistory Json @default("[]")
   dueDate        DateTime?
   dueTimeMinutes Int?
   timezone       String                      @default("UTC")
@@ -154,6 +167,7 @@ model PlannedActivityTranslation {
 enum PlannedActivityScheduleType {
   SIMPLE
   DAILY
+  WEEKLY
   DATE
 }
 
@@ -230,6 +244,8 @@ model Goal {
   id           String       @id @default(uuid())
   userId       String
   title        String
+  progressBaseCount Int @default(0)
+  progressVersion Int @default(0)
   targetCount  Int
   currentCount Int          @default(0)
   type         ActivityType

@@ -61,12 +61,11 @@ export function useScreenResource<T>(fetcher: () => Promise<T>) {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') void reload();
     });
-    // Refresh date-based completion state across local midnight while the screen stays open.
-    let day = new Date().toDateString();
+    // Task zones can cross midnight before or after the device zone. Refresh the
+    // focused screen while active; background execution is deliberately not assumed.
     const timer = setInterval(() => {
-      const next = new Date().toDateString();
-      if (day !== next) { day = next; void reload(); }
-    }, 30000);
+      if (AppState.currentState === 'active') void reload();
+    }, 60000);
     return () => { ++sequence.current; subscription.remove(); clearInterval(timer); };
   }, [language, userId, revision, reload]));
 

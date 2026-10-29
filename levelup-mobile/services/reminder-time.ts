@@ -1,4 +1,4 @@
-import { PlannedActivity } from '../types';
+import { PlannedActivity, ScheduleRevision } from '../types';
 
 // Convert calendar values in the task's IANA zone, never in the device's current zone.
 const partsInZone = (date: Date, timezone: string) => {
@@ -32,25 +32,37 @@ export function zonedReminderDate(key: string, minutes: number, timezone: string
   return null;
 }
 
+export const isRecurring = (type: string) => type === 'DAILY' || type === 'WEEKLY';
+export function scheduleOnDate(activity: PlannedActivity, key: string): ScheduleRevision | undefined {
+  if (activity.scheduleHistory?.length) return activity.scheduleHistory.filter((item) => item.from <= key).at(-1);
+  return { from: activity.createdAt.slice(0, 10), scheduleType: activity.scheduleType, weekdays: activity.weekdays ?? [],
+    paused: activity.status === 'DISABLED', dueDate: activity.dueDate?.slice(0, 10) ?? null,
+    dueTimeMinutes: activity.dueTimeMinutes ?? null, timezone: activity.timezone };
+}
+export function isScheduledOn(activity: PlannedActivity, key: string) {
+  const schedule = scheduleOnDate(activity, key);
+  return Boolean(schedule && !schedule.paused && (schedule.scheduleType === 'DAILY' ||
+    (schedule.scheduleType === 'WEEKLY' && schedule.weekdays.includes(new Date(`${key}T00:00:00Z`).getUTCDay())) ||
+    (schedule.scheduleType === 'DATE' && schedule.dueDate === key)));
+}
 export function activityReminderDates(activity: PlannedActivity, now = new Date()): Date[] {
-  if (activity.status !== 'ACTIVE' || activity.dueTimeMinutes == null) return [];
+  if (activity.status !== 'ACTIVE') return [];
   try {
     const timezone = activity.timezone || 'UTC';
-    const minutes = activity.dueTimeMinutes;
-    if (activity.scheduleType === 'DAILY') {
-      const today = dateKeyInZone(now, timezone);
-      // Android has no timezone-aware repeating trigger. Renew a rolling month on foreground.
-      return Array.from({ length: 31 }, (_, day) => zonedReminderDate(addDays(today, day), minutes, timezone))
-        .filter((date): date is Date => date !== null && date > now);
+    const today = dateKeyInZone(now, timezone);
+    const completedDate = activity.completedTodayAt ? dateKeyInZone(new Date(activity.completedTodayAt), timezone) :
+      activity.isCompletedToday ? activity.occurrenceDate ?? today : null;
+    if (isRecurring(activity.scheduleType)) {
+      return Array.from({ length: 31 }, (_, day) => {
+        const key = addDays(today, day);
+        const schedule = scheduleOnDate(activity, key);
+        if (key === completedDate || !schedule || schedule.dueTimeMinutes === null || !isScheduledOn(activity, key)) return null;
+        return zonedReminderDate(key, schedule.dueTimeMinutes, schedule.timezone);
+      }).filter((date): date is Date => date !== null && date > now);
     }
-    let key = activity.dueDate?.slice(0, 10);
-    if (activity.scheduleType === 'SIMPLE') {
-      const reference = new Date(activity.updatedAt);
-      key = dateKeyInZone(reference, timezone);
-      const date = zonedReminderDate(key, minutes, timezone);
-      if (!date || date <= reference) key = addDays(key, 1);
-    }
-    const date = key ? zonedReminderDate(key, minutes, timezone) : null;
+    if (activity.dueTimeMinutes == null || activity.scheduleType !== 'DATE') return [];
+    const key = activity.dueDate?.slice(0, 10);
+    const date = key ? zonedReminderDate(key, activity.dueTimeMinutes, timezone) : null;
     return date && date > now ? [date] : [];
   } catch { return []; }
 }

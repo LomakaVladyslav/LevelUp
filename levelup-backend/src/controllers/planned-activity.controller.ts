@@ -1,3 +1,4 @@
+import { isRecurring, scheduledOn, habitStreak, snapshot, reviseSchedule, scheduleForDate } from '../services/recurrence.service';
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { completeActivity } from '../services/completion.service';
@@ -7,7 +8,6 @@ import { dateOnly, textField } from '../utils/validation';
 import { HttpError, sendError } from '../utils/http-error';
 import { getRequestLocale } from '../utils/locale';
 import {
-  calculateActivityStreak,
   calculateTodayProgress,
   dateFromKey,
   dateKeyInTimezone,
@@ -16,7 +16,7 @@ import {
 } from '../services/planned-activity-metrics.service';
 
 const validTypes = ['STUDY', 'WORKOUT', 'HABIT', 'CUSTOM'] as const;
-const validScheduleTypes = ['SIMPLE', 'DAILY', 'DATE'] as const;
+const validScheduleTypes = ['SIMPLE', 'DAILY', 'WEEKLY', 'DATE'] as const;
 const validStatuses = ['ACTIVE', 'DISABLED'] as const;
 
 type ActivityTypeInput = (typeof validTypes)[number];
@@ -24,6 +24,7 @@ type ScheduleTypeInput = (typeof validScheduleTypes)[number];
 type EditableStatusInput = (typeof validStatuses)[number];
 
 type PlannedActivityData = {
+  weekdays: number[];
   type: ActivityTypeInput;
   title: string;
   description: string | null;
@@ -81,12 +82,12 @@ const validateCreatePayload = (payload: unknown): {
   const title = textField(payload.title, 'Title', 200, true);
   if (!title) return { error: 'Title is required' };
 
-  if (!isActivityType(payload.type)) {
+  if (payload.type !== undefined && !isActivityType(payload.type)) {
     return { error: `Type must be one of: ${validTypes.join(', ')}` };
   }
 
   const scheduleType = payload.scheduleType === undefined
-    ? 'SIMPLE'
+    ? payload.dueDate ? 'DATE' : 'SIMPLE'
     : isScheduleType(payload.scheduleType)
       ? payload.scheduleType
       : null;
@@ -108,9 +109,14 @@ const validateCreatePayload = (payload: unknown): {
 
   if (payload.timezone !== undefined && (typeof payload.timezone !== 'string' || normalizeTimezone(payload.timezone) !== payload.timezone)) return { error: 'Invalid timezone' };
 
+  const weekdays = payload.weekdays ?? [];
+  if (!Array.isArray(weekdays) || weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6) || new Set(weekdays).size !== weekdays.length || (scheduleType === 'WEEKLY' && !weekdays.length)) return { error: 'Choose distinct weekdays from 0 (Sunday) to 6 (Saturday)' };
+  if (scheduleType === 'SIMPLE' && dueTimeMinutes !== null) return { error: 'A reminder time requires a date or recurrence' };
+
   return {
     data: {
-      type: payload.type,
+      type: (payload.type ?? 'CUSTOM') as ActivityTypeInput,
+      weekdays: scheduleType === 'WEEKLY' ? weekdays : [],
       title,
       description: textField(payload.description, 'Description', 5000),
       motivationText: textField(payload.motivationText, 'Motivation text', 300),
@@ -157,7 +163,7 @@ export const getPlannedActivities = async (
       ? metricActivities
       : metricActivities.filter((activity) => activity.status === 'ACTIVE' || (includeDisabled && activity.status === 'DISABLED'));
     const dailyActivities = visibleActivities.filter(
-      (activity) => activity.scheduleType === 'DAILY',
+      (activity) => isRecurring(activity.scheduleType),
     );
     const progressCompletionTargets = metricActivities.flatMap((activity) => {
       if (activity.status === 'DISABLED' || activity.scheduleType === 'SIMPLE') {
@@ -166,7 +172,7 @@ export const getPlannedActivities = async (
 
       const todayDateKey = dateKeyInTimezone(now, activity.timezone);
       const dueToday =
-        activity.scheduleType === 'DAILY' ||
+        (isRecurring(activity.scheduleType) && scheduledOn(activity, todayDateKey)) ||
         (activity.scheduleType === 'DATE' &&
           activity.dueDate !== null &&
           storedDateKey(activity.dueDate) === todayDateKey);
@@ -252,8 +258,9 @@ export const getPlannedActivities = async (
     const activitiesWithMetrics = visibleActivities.map((activity) => {
       const completedTodayAt =
         completionTodayByActivityId.get(activity.id) ?? null;
-      const streakDays = activity.scheduleType === 'DAILY'
-        ? calculateActivityStreak(
+      const streakDays = isRecurring(activity.scheduleType)
+        ? habitStreak(
+            activity,
             completionDatesByActivityId.get(activity.id) ?? [],
             dateKeyInTimezone(now, activity.timezone),
           )
@@ -261,10 +268,13 @@ export const getPlannedActivities = async (
 
       return {
         ...activity,
+        occurrenceDate: dateKeyInTimezone(now, activity.timezone),
+        effectiveSchedule: scheduleForDate(activity, dateKeyInTimezone(now, activity.timezone)),
+        isScheduledToday: scheduledOn(activity, dateKeyInTimezone(now, activity.timezone)),
         isCompletedToday:
-          activity.scheduleType === 'DAILY' && Boolean(completedTodayAt),
+          isRecurring(activity.scheduleType) && Boolean(completedTodayAt),
         completedTodayAt:
-          activity.scheduleType === 'DAILY' ? completedTodayAt : null,
+          isRecurring(activity.scheduleType) ? completedTodayAt : null,
         streakDays,
       };
     });
@@ -294,7 +304,7 @@ export const createPlannedActivity = async (req: Request, res: Response): Promis
     const { data, error } = validateCreatePayload(req.body);
     if (!data) throw new HttpError(400, error!);
     const result = await runMutation(req, async (tx) => {
-      const plannedActivity = await tx.plannedActivity.create({ data: { userId: req.user.id, ...data } });
+      const plannedActivity = await tx.plannedActivity.create({ data: { userId: req.user.id, ...data, scheduleHistory: [snapshot({ ...data, status: 'ACTIVE' }, dateKeyInTimezone(new Date(), data.timezone))] } });
       return { plannedActivity: displayPlanned(plannedActivity) };
     });
     res.status(201).json(result);
@@ -315,7 +325,7 @@ export const createPlannedActivitiesBulk = async (req: Request, res: Response): 
     const result = await runMutation(req, async (tx) => {
       const plannedActivities = [];
       for (const item of validated) {
-        plannedActivities.push(displayPlanned(await tx.plannedActivity.create({ data: { userId: req.user.id, ...item.data! } })));
+        plannedActivities.push(displayPlanned(await tx.plannedActivity.create({ data: { userId: req.user.id, ...item.data!, scheduleHistory: [snapshot({ ...item.data!, status: 'ACTIVE' }, dateKeyInTimezone(new Date(), item.data!.timezone))] } })));
       }
       return { plannedActivities };
     });
@@ -333,14 +343,20 @@ export const updatePlannedActivity = async (req: Request, res: Response): Promis
       if (req.body.updatedAt !== undefined && req.body.updatedAt !== existing.updatedAt.toISOString()) {
         throw new HttpError(409, 'This activity has changed. Reload it before editing.', 'ACTIVITY_CHANGED');
       }
-      const editable = ['type', 'title', 'description', 'motivationText', 'scheduleType', 'dueDate', 'dueTimeMinutes', 'timezone'];
+      const editable = ['type', 'title', 'description', 'motivationText', 'scheduleType', 'dueDate', 'dueTimeMinutes', 'timezone', 'weekdays'];
       const supplied = Object.fromEntries(Object.entries(req.body).filter(([key]) => editable.includes(key)));
       const { data, error } = validateCreatePayload({ ...existing, dueDate: existing.dueDate?.toISOString() ?? null, ...supplied });
       if (!data) throw new HttpError(400, error!);
       const status = req.body.status ?? existing.status;
-      if (!isEditableStatus(status) || (status === 'DISABLED' && data.scheduleType !== 'DAILY')) throw new HttpError(400, 'Only daily activities can be disabled');
+      if (!isEditableStatus(status) || (status === 'DISABLED' && !isRecurring(data.scheduleType))) throw new HttpError(400, 'Only recurring activities can be paused');
+      // Keep an established recurring series recurring: converting it would mix
+      // one-off state and historical occurrences. Create a separate one-off instead.
+      if (isRecurring(existing.scheduleType) && !isRecurring(data.scheduleType)) throw new HttpError(400, 'A recurring task must retain recurrence');
+      if (isRecurring(existing.scheduleType) && data.timezone !== existing.timezone) throw new HttpError(400, 'A recurring task retains its timezone');
+      const changed = ['scheduleType', 'dueDate', 'dueTimeMinutes', 'timezone', 'weekdays', 'status'].some((key) =>
+        JSON.stringify(({ ...data, status } as Record<string, unknown>)[key]) !== JSON.stringify((existing as unknown as Record<string, unknown>)[key]));
       const activity = await tx.plannedActivity.update({ where: { id: existing.id }, data: {
-        ...data, status, disabledAt: status === 'DISABLED' ? existing.disabledAt ?? new Date() : null,
+        ...data, status, ...(changed ? { scheduleHistory: reviseSchedule(existing, { ...data, status }) } : {}), disabledAt: status === 'DISABLED' ? existing.disabledAt ?? new Date() : null,
       } });
       if (data.title !== existing.title || data.description !== existing.description || data.motivationText !== existing.motivationText) {
         await tx.plannedActivityTranslation.deleteMany({ where: { plannedActivityId: existing.id } });
@@ -364,7 +380,7 @@ export const deletePlannedActivity = async (req: Request, res: Response): Promis
 export const completePlannedActivity = async (req: Request, res: Response): Promise<void> => {
   try {
     const result = await runMutation(req, (tx) => completeActivity(tx, {
-      userId: req.user.id, locale: getRequestLocale(req), timezone: getRequestTimezone(req), plannedActivityId: req.params.id, completionDate: req.body?.completionDate,
+      userId: req.user.id, locale: getRequestLocale(req), timezone: getRequestTimezone(req), plannedActivityId: req.params.id, completionDate: req.body?.completionDate, expectedUpdatedAt: req.body?.updatedAt,
     }));
     res.status(201).json(result);
   } catch (error) { sendError(res, error); }

@@ -1,3 +1,4 @@
+import { isRecurring } from '../../services/reminder-time';
 import { pageContent } from '../../components/ScreenUi';
 import { useScreenResource } from '../../hooks/useScreenResource';
 import { ResourceError } from '../../components/ResourceError';
@@ -73,11 +74,11 @@ export default function HomeScreen() {
       if (session !== apiContext.get().sessionVersion) return;
       tasks.setData((current) => ({
         plannedActivities: (current?.plannedActivities ?? []).map((task) => task.id === activity.id ? {
-          ...task, isCompletedToday: true, status: task.scheduleType === 'DAILY' ? 'ACTIVE' : 'COMPLETED',
+          ...task, isCompletedToday: true, status: isRecurring(task.scheduleType) ? 'ACTIVE' : 'COMPLETED',
         } : task),
         todayProgress: current?.todayProgress ?? { completed: 0, total: 0, percentage: 0 },
       }));
-      setCelebration({ variant: result.levelUp ? 'levelUp' : result.newAchievements.length ? 'achievement' : 'completed', xpGained: result.xpGained + (result.achievementXpGained ?? 0), newLevel: result.newLevel });
+      setCelebration({ activityId: result.activity.id, variant: result.levelUp ? 'levelUp' : result.newAchievements.length ? 'achievement' : 'completed', xpGained: result.xpGained + (result.achievementXpGained ?? 0), newLevel: result.newLevel });
       void tasks.reload();
       void loadData();
       void history.reload();
@@ -126,7 +127,7 @@ export default function HomeScreen() {
             <Text style={styles.activityTitle}>{activityEmoji[nextTask.type]} {nextTask.displayTitle || nextTask.title}</Text>
             {nextTask.description || nextTask.displayDescription ? <Text style={styles.taskDescription} numberOfLines={3}>{nextTask.displayDescription || nextTask.description}</Text> : null}
             <Text style={styles.taskDescription}>
-              {t(nextTask.scheduleType === 'DAILY' ? 'activities.scheduleDaily' : nextTask.scheduleType === 'DATE' ? 'activities.scheduleDate' : 'activities.scheduleSimple')}
+              {t(nextTask.scheduleType === 'WEEKLY' ? 'taskEngine.selectedDays' : nextTask.scheduleType === 'DAILY' ? 'activities.scheduleDaily' : nextTask.scheduleType === 'DATE' ? 'activities.scheduleDate' : 'activities.scheduleSimple')}
               {nextTask.dueDate ? ` · ${new Date(`${nextTask.dueDate.slice(0, 10)}T12:00:00`).toLocaleDateString(getLocale(language))}` : ''}
               {nextTask.dueTimeMinutes != null ? ` · ${String(Math.floor(nextTask.dueTimeMinutes / 60)).padStart(2, '0')}:${String(nextTask.dueTimeMinutes % 60).padStart(2, '0')}` : ''}
             </Text>

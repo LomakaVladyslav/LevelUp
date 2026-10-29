@@ -49,3 +49,14 @@ test('a confirmed validation failure clears the key; different users never share
   await mutate('post', '/planned-activities', {});
   expect(send.mock.calls[1][0].headers?.['Idempotency-Key']).not.toBe(firstKey);
 });
+
+test('undo retry after lost response reuses its persisted idempotency key', async () => {
+  apiContext.setToken('token', 'owner');
+  const post = jest.spyOn(api, 'request');
+  post.mockRejectedValueOnce(new Error('lost response'));
+  await expect(mutate('post', '/activities/completion-1/undo')).rejects.toThrow('lost response');
+  const key = post.mock.calls.at(-1)![0]!.headers!['Idempotency-Key'];
+  post.mockResolvedValueOnce({ data: { undone: true } });
+  await expect(mutate('post', '/activities/completion-1/undo')).resolves.toEqual({ undone: true });
+  expect(post.mock.calls.at(-1)![0]!.headers!['Idempotency-Key']).toBe(key);
+});

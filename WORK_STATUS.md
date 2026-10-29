@@ -1,3 +1,15 @@
+## Stage 2 implementation — 2026-10-28
+
+Stage 2 core task engine changes are in the working tree on `upgrade/expo-sdk-54`, base/HEAD `ba9a35e`. See [qa/STAGE2_CORE_ENGINE.md](qa/STAGE2_CORE_ENGINE.md) for recurrence semantics, transactional Undo, reminder behavior, migration and exact validation results. No production migration/deploy or Stage 3 work.
+
+Recovered after the interrupted session without reset/clean/stash/checkout: 45 modified tracked files and 14 untracked files were present, no staged files or in-progress Git operations. All named Stage 2 components were found. Recovery fixed stale reminder reads after Undo/settings changes, one-off date-edit history/Today progress, explicit navigation readiness for notification taps, and the migration foreign-key update action. Existing XP rollback and goal attribution fixes were preserved.
+
+Backend: 61/61 socket-free checks pass; final full suite has 62 passes and 24 HTTP setup failures due to sandbox `listen EPERM` (86 total). Mobile: 108/108 in 16 suites; both lint/typechecks pass. Fresh Android/iOS Hermes exports pass (actual HBC v96 verified). Prisma schema validation and Stage 1-to-Stage 2 schema SQL diff passed; the migration/backfills were reviewed statically, not executed. PostgreSQL initialization was retried once and remains blocked at `shmget`; the 30-test persistence suite fails before tests with P1001 on the explicit isolated localhost test URL. Expo Doctor 16/18 with two remote checks unavailable; fresh npm audits blocked by DNS. Native dependencies/configuration did not change, so the prior isolated Android prebuild was retained without repeating it. Native Gradle's socket limitation and physical-device QA remain unresolved.
+
+No new commits/push: `.git` write-access check returns `EPERM`, there is no stale index lock, and GitHub DNS is unavailable. Branch/HEAD remain `upgrade/expo-sdk-54` / `ba9a35ee518d09a11689e1d6a3bc6b3d0b17342e`. Final tree: 45 modified tracked files, 14 untracked files, zero staged; no added secrets/.env/dependency lockfiles/build outputs detected. Cached remote equals the baseline but live remote is unverified. Do not infer Stage 2 acceptance from successful unit tests; complete PostgreSQL, populated migration, HTTP and native validation before closing Stage 2. No Stage 3 or production work was performed.
+
+---
+
 ## Stage 1 update — 2026-10-27
 
 Baseline is `08769dd` on `upgrade/expo-sdk-54`; previous stabilization was preserved and pushed. Stage 1 implements AI privacy gates, dependency fixes, owner-only avatars, deletion cleanup with race protection, age UX removal and auth/logging safeguards. See [qa/STAGE1_SECURITY.md](qa/STAGE1_SECURITY.md) for controls, validation, residual advisories and environment limitations. No Stage 2 product work or production migration was performed.

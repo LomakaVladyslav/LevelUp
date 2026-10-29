@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createActivity,
+  undoActivity,
   getActivities,
   getActivityById,
   deleteActivity,
@@ -13,6 +14,7 @@ const router = Router();
 router.use(authenticate);
 
 router.post('/', createActivity);
+router.post('/:id/undo', undoActivity);
 router.get('/', getActivities);
 router.get('/:id', getActivityById);
 router.delete('/:id', deleteActivity);

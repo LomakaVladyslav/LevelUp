@@ -1,6 +1,20 @@
 import type { TranslationDictionary } from './types';
 
 export const id: TranslationDictionary = {
+  "taskEngine.notScheduled": "Not scheduled today",
+  "taskEngine.undo": "Undo completion",
+  "taskEngine.selectedDays": "Selected weekdays",
+  "taskEngine.weekdays": "Monday–Friday",
+  "taskEngine.chooseDays": "Choose at least one weekday.",
+  "taskEngine.categoryOptional": "Category (optional)",
+  "taskEngine.futureSchedule": "Schedule changes and resume start tomorrow. Pausing stops reminders immediately.",
+  "taskEngine.unavailable": "This task is no longer available.",
+  "taskEngine.permissionGranted": "System permission: allowed",
+  "taskEngine.permissionDenied": "System permission: denied. Enable notifications in system settings.",
+  "taskEngine.permissionUnknown": "System permission: not requested",
+  "taskEngine.reminderHelp": "Task reminders follow each task’s time and timezone. Open the app regularly to replenish upcoming reminders.",
+  "taskEngine.systemSettings": "Open system settings",
+
   "home.streakHelp": "Selesaikan setidaknya satu tugas setiap hari. Beberapa tugas pada hari yang sama tidak menambah hari beruntun.",
   "stats.xpIncludesRewards": "XP mencakup tugas yang selesai dan hadiah pencapaian.",
   "home.firstTask": "Buat tugas pertamamu, lalu selesaikan untuk mendapatkan XP.",

@@ -1,4 +1,5 @@
 import { apiContext } from '../services/api-context';
+import { useDataRevision } from './data.store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { isLanguage, Language } from '../constants/i18n';
@@ -68,21 +69,16 @@ function createSettingsStore() {
       if (!apiContext.get().token) return;
 
       const session = apiContext.get().sessionVersion;
+      const dataRevision = useDataRevision.getState().revision;
       const reminderUpdates: Promise<unknown>[] = [
         plannedActivityService.getAll().then(({ plannedActivities }) => {
-          if (session !== apiContext.get().sessionVersion || get().language !== language) return;
+          if (session !== apiContext.get().sessionVersion || get().language !== language || dataRevision !== useDataRevision.getState().revision) return;
           return notificationService.rescheduleExistingActivityReminders(
             plannedActivities,
             language,
           );
         }),
       ];
-
-      if (get().notificationsEnabled) {
-        reminderUpdates.push(
-          notificationService.scheduleDailyReminder(language),
-        );
-      }
 
       const results = await Promise.allSettled(reminderUpdates);
       for (const result of results) {
@@ -110,9 +106,14 @@ function createSettingsStore() {
         const granted = await notificationService.requestPermission();
         if (!isCurrent()) return;
         if (!granted) throw new Error('notifications.permissionDenied');
-        await notificationService.scheduleDailyReminder(get().language);
+        const dataRevision = useDataRevision.getState().revision;
+        const { plannedActivities } = await plannedActivityService.getAll();
+        if (!isCurrent()) return;
+        // Enabling the setting triggers a fresh root reconciliation if a mutation
+        // overtook this read. Never restore a deleted/paused task from that read.
+        if (dataRevision === useDataRevision.getState().revision) await notificationService.reconcileReminders(plannedActivities, get().language, true);
       } else {
-        await notificationService.cancelDailyReminder();
+        await notificationService.cancelAllReminders();
       }
       await persistNotification(async () => {
         if (!isCurrent()) return;

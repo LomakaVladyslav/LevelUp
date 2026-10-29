@@ -1,5 +1,6 @@
+import { notificationService } from '../../services/notification.service';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Linking, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import * as ImagePicker from 'expo-image-picker';
 import { authService } from '../../services/auth.service';
@@ -26,6 +27,14 @@ export default function SettingsScreen() {
   const [operation, setOperation] = useState<'avatar' | 'delete' | null>(null);
   const notificationsPending = useRef(false);
   const [updatingNotifications, setUpdatingNotifications] = useState(false);
+  const [permission, setPermission] = useState<string>('undetermined');
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { void notificationService.getPermissionStatus().then((status) => { if (active) setPermission(status); }).catch(() => undefined); };
+    refresh();
+    const subscription = AppState.addEventListener('change', (state) => { if (state === 'active') refresh(); });
+    return () => { active = false; subscription.remove(); };
+  }, [updatingNotifications]);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -92,7 +101,9 @@ export default function SettingsScreen() {
       <View style={styles.settingRow}>
         <View style={styles.settingText}>
           <Text style={styles.settingTitle}>{t('settings.notifications')}</Text>
-          <Text style={styles.settingSubtitle}>{t('settings.notificationsTime')}</Text>
+          <Text style={styles.settingSubtitle}>{t('taskEngine.reminderHelp')}</Text>
+          <Text style={styles.settingSubtitle}>{t(permission === 'granted' ? 'taskEngine.permissionGranted' : permission === 'denied' ? 'taskEngine.permissionDenied' : 'taskEngine.permissionUnknown')}</Text>
+          {permission === 'denied' ? <ActionButton label={t('taskEngine.systemSettings')} variant="secondary" onPress={() => { void Linking.openSettings(); }} /> : null}
         </View>
         <Switch accessibilityLabel={t('settings.notifications')} value={notificationsEnabled} onValueChange={handleNotificationsChange} disabled={updatingNotifications || operation === 'delete'} trackColor={{ false: colors.border, true: colors.primaryLight }} thumbColor={notificationsEnabled ? colors.primary : colors.textMuted} />
       </View>

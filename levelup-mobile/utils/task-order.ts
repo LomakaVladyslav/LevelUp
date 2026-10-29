@@ -1,8 +1,9 @@
 import type { PlannedActivity } from '../types';
-import { dateKeyInZone } from '../services/reminder-time';
+import { dateKeyInZone, isRecurring, isScheduledOn } from '../services/reminder-time';
 
 export function isTaskAvailable(activity: PlannedActivity, now = new Date()) {
   return activity.status === 'ACTIVE' && !activity.isCompletedToday &&
+    (!isRecurring(activity.scheduleType) || isScheduledOn(activity, dateKeyInZone(now, activity.timezone))) &&
     (activity.scheduleType !== 'DATE' || (activity.dueDate ?? '').slice(0, 10) <= dateKeyInZone(now, activity.timezone));
 }
 
@@ -13,7 +14,7 @@ export function orderTasks(activities: PlannedActivity[], now = new Date()) {
   const priority = (activity: PlannedActivity) => {
     if (activity.isCompletedToday) return 4;
     if (activity.scheduleType === 'SIMPLE') return 2;
-    if (activity.scheduleType === 'DAILY') return 1;
+    if (isRecurring(activity.scheduleType)) return isScheduledOn(activity, dateKeyInZone(now, activity.timezone)) ? 1 : 3;
     const date = (activity.dueDate ?? '').slice(0, 10);
     const zone = activity.timezone || 'UTC';
     if (!days.has(zone)) days.set(zone, dateKeyInZone(now, zone));

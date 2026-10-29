@@ -273,7 +273,7 @@ test('activities create modal does not show the star badge text field', async ()
   await fireEvent.press(screen.getByText('Create activity'));
 
   await waitFor(() => {
-    expect(screen.getByText('Category')).toBeTruthy();
+    expect(screen.getByText('Category (optional)')).toBeTruthy();
   });
   expect(screen.queryByText('Star badge text')).toBeNull();
   expect(screen.queryByPlaceholderText('Example: 20 focused minutes')).toBeNull();
@@ -295,7 +295,7 @@ test('activities screen shows celebration after completing an activity', async (
   await fireEvent.press(screen.getByText('Complete'));
 
   await waitFor(() => {
-    expect(plannedActivityService.complete).toHaveBeenCalledWith('planned-1');
+    expect(plannedActivityService.complete).toHaveBeenCalledWith('planned-1', undefined, plannedActivity.updatedAt);
   });
   await waitFor(() => {
     expect(screen.getByTestId('completion-celebration')).toBeTruthy();
@@ -341,7 +341,7 @@ test('Home completion blocks duplicate taps, preserves the task on failure and r
   jest.mocked(plannedActivityService.complete).mockResolvedValue({ ...completionResult, totalXp: 90, achievementXpGained: 60 });
   jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [], todayProgress: { completed: 0, total: 0, percentage: 0 } });
   await fireEvent.press(screen.getByText('Complete'));
-  await waitFor(() => expect(useAuthStore.getState().user?.xp).toBe(90));
+  await waitFor(() => expect(authService.getMe).toHaveBeenCalled());
   expect(screen.getByTestId('completion-celebration')).toBeTruthy();
   expect(screen.queryByText('Complete')).toBeNull();
   alert.mockRestore();
@@ -468,4 +468,29 @@ test('slow history never blocks Home XP and streak', async () => {
   expect(screen.getByText('Total XP: 0')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Day streak' }).props.accessibilityValue).toEqual({ text: '0' });
   expect(screen.getByRole('button', { name: 'Progress' }).props.accessibilityValue).toEqual({ text: 'Level 1. Total XP: 0' });
+});
+
+test('a quick task needs only a title and defaults to the optional CUSTOM category', async () => {
+  jest.mocked(plannedActivityService.create).mockResolvedValue({ plannedActivity: { ...plannedActivity, type: 'CUSTOM', title: 'Quick note' } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(await screen.findByText('Create activity'));
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Quick note');
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Quick note', type: 'CUSTOM', scheduleType: 'SIMPLE', dueDate: null, dueTimeMinutes: null })));
+});
+test('selected weekdays exposes the Monday-Friday preset without requiring a category', async () => {
+  jest.mocked(plannedActivityService.create).mockResolvedValue({ plannedActivity: { ...plannedActivity, scheduleType: 'WEEKLY', weekdays: [1, 2, 3, 4, 5] } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(await screen.findByText('Create activity'));
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Walk');
+  await fireEvent.press(screen.getByText('Selected weekdays'));
+  await fireEvent.press(screen.getByText('Monday–Friday'));
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ scheduleType: 'WEEKLY', weekdays: [1, 2, 3, 4, 5] })));
+});
+test('notification route opens the identified task rather than another list item', async () => {
+  jest.mocked(useLocalSearchParams).mockReturnValue({ taskId: plannedActivity.id });
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<ActivitiesScreen />);
+  await waitFor(() => expect(screen.getByLabelText('Title').props.value).toBe(plannedActivity.title));
 });

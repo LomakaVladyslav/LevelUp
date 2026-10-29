@@ -42,6 +42,10 @@ export async function runMutation<T>(req: Request, operation: (tx: Prisma.Transa
         if (previous.requestHash !== requestHash) {
           throw new HttpError(409, 'This request key was used for different data', 'IDEMPOTENCY_CONFLICT');
         }
+        const activityId = (previous.response as { activity?: { id?: string } })?.activity?.id;
+        if (activityId && await tx.completionUndo.findUnique({ where: { activityId } })) {
+          throw new HttpError(409, 'This completion was undone. Reload before completing again.', 'COMPLETION_UNDONE');
+        }
         return previous.response as T;
       }
     }

@@ -42,8 +42,8 @@ export const plannedActivityService = {
     return data as { plannedActivity: PlannedActivity };
   },
 
-  complete: async (id: string, completionDate?: string) => {
-    const data = await mutate('post', `/planned-activities/${id}/complete`, completionDate ? { completionDate } : {});
+  complete: async (id: string, completionDate?: string, updatedAt?: string) => {
+    const data = await mutate('post', `/planned-activities/${id}/complete`, { ...(completionDate ? { completionDate } : {}), ...(updatedAt ? { updatedAt } : {}) });
     return data as ActivityResult;
   },
 

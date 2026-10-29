@@ -1,6 +1,20 @@
 import type { TranslationDictionary } from './types';
 
 export const uk: TranslationDictionary = {
+  "taskEngine.notScheduled": "Не заплановано на сьогодні",
+  "taskEngine.undo": "Скасувати виконання",
+  "taskEngine.selectedDays": "Обрані дні тижня",
+  "taskEngine.weekdays": "Понеділок–п’ятниця",
+  "taskEngine.chooseDays": "Оберіть хоча б один день тижня.",
+  "taskEngine.categoryOptional": "Категорія (необов’язково)",
+  "taskEngine.futureSchedule": "Зміни розкладу та відновлення діють із завтра. Пауза одразу вимикає нагадування.",
+  "taskEngine.unavailable": "Це завдання більше недоступне.",
+  "taskEngine.permissionGranted": "Системний дозвіл: надано",
+  "taskEngine.permissionDenied": "Системний дозвіл: відхилено. Увімкніть сповіщення в налаштуваннях пристрою.",
+  "taskEngine.permissionUnknown": "Системний дозвіл: ще не запитано",
+  "taskEngine.reminderHelp": "Нагадування відповідають часу й часовому поясу завдання. Регулярно відкривайте застосунок, щоб поповнювати майбутні нагадування.",
+  "taskEngine.systemSettings": "Відкрити системні налаштування",
+
   "home.streakHelp": "Виконуйте хоча б одне завдання щодня. Кілька завдань за один день не додають зайвих днів до серії.",
   "stats.xpIncludesRewards": "XP включає виконані завдання та нагороди за досягнення.",
   "home.firstTask": "Створіть перше завдання та виконайте його, щоб отримати XP.",

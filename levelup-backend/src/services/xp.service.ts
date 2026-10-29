@@ -6,10 +6,11 @@ export async function awardXP(
   amount: number,
   reason: string,
   db: Prisma.TransactionClient,
+  createdAt?: Date,
 ): Promise<{ levelUp: boolean; newLevel: number; xpGained: number }> {
   // 1. Record this XP gain in history (useful for the stats chart)
   await db.xpHistory.create({
-    data: { userId, amount, reason },
+    data: { userId, amount, reason, createdAt },
   });
 
   // 2. Add XP to the user's total

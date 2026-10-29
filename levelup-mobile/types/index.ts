@@ -24,8 +24,13 @@ export interface Activity {
 }
 
 export type ActivityType = 'STUDY' | 'WORKOUT' | 'HABIT' | 'CUSTOM';
-export type PlannedActivityScheduleType = 'SIMPLE' | 'DAILY' | 'DATE';
+export type PlannedActivityScheduleType = 'SIMPLE' | 'DAILY' | 'WEEKLY' | 'DATE';
 export type PlannedActivityStatus = 'ACTIVE' | 'COMPLETED' | 'DISABLED';
+
+export interface ScheduleRevision {
+  from: string; scheduleType: PlannedActivityScheduleType; weekdays: number[]; paused: boolean;
+  dueDate: string | null; dueTimeMinutes: number | null; timezone: string;
+}
 
 export interface PlannedActivity {
   id: string;
@@ -46,6 +51,11 @@ export interface PlannedActivity {
   disabledAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  weekdays?: number[];
+  scheduleHistory?: ScheduleRevision[];
+  effectiveSchedule?: ScheduleRevision;
+  occurrenceDate?: string;
+  isScheduledToday?: boolean;
   isCompletedToday?: boolean;
   completedTodayAt?: string | null;
   streakDays?: number | null;
@@ -58,7 +68,8 @@ export interface TodayProgress {
 }
 
 export interface PlannedActivityInput {
-  type: ActivityType;
+  type?: ActivityType;
+  weekdays?: number[];
   title: string;
   description?: string | null;
   motivationText?: string | null;

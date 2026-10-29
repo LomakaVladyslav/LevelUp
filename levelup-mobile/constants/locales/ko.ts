@@ -1,6 +1,20 @@
 import type { TranslationDictionary } from './types';
 
 export const ko: TranslationDictionary = {
+  "taskEngine.notScheduled": "Not scheduled today",
+  "taskEngine.undo": "Undo completion",
+  "taskEngine.selectedDays": "Selected weekdays",
+  "taskEngine.weekdays": "Monday–Friday",
+  "taskEngine.chooseDays": "Choose at least one weekday.",
+  "taskEngine.categoryOptional": "Category (optional)",
+  "taskEngine.futureSchedule": "Schedule changes and resume start tomorrow. Pausing stops reminders immediately.",
+  "taskEngine.unavailable": "This task is no longer available.",
+  "taskEngine.permissionGranted": "System permission: allowed",
+  "taskEngine.permissionDenied": "System permission: denied. Enable notifications in system settings.",
+  "taskEngine.permissionUnknown": "System permission: not requested",
+  "taskEngine.reminderHelp": "Task reminders follow each task’s time and timezone. Open the app regularly to replenish upcoming reminders.",
+  "taskEngine.systemSettings": "Open system settings",
+
   "home.streakHelp": "매일 할 일을 하나 이상 완료하세요. 같은 날 여러 개를 완료해도 연속 일수가 추가로 늘어나지 않습니다.",
   "stats.xpIncludesRewards": "XP에는 할 일 완료와 업적 보상이 포함됩니다.",
   "home.firstTask": "첫 할 일을 만들고 완료하여 XP를 얻으세요.",

@@ -1,3 +1,4 @@
+import { UndoCompletionButton } from './UndoCompletionButton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -24,6 +25,7 @@ export type CompletionCelebrationVariant =
   | 'achievement';
 
 export type CompletionCelebrationData = {
+  activityId?: string;
   variant: CompletionCelebrationVariant;
   xpGained?: number;
   newLevel?: number;
@@ -52,7 +54,7 @@ type ParticleSpec = {
 };
 
 const PARTICLE_COUNT = 48;
-const DEFAULT_AUTO_DISMISS_MS = 2800;
+const DEFAULT_AUTO_DISMISS_MS = 8000;
 
 const createParticles = (
   colors: AppTheme['colors'],
@@ -226,13 +228,14 @@ export function CompletionCelebration({
 
   return (
     <View
-      pointerEvents="none"
+      pointerEvents="box-none"
       style={styles.celebrationLayer}
       testID="completion-celebration"
     >
       <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 24, right: 24, top: 24, padding: 16, borderRadius: 16, backgroundColor: colors.surface, borderColor: colors.successBorder, borderWidth: 1 }}>
         <Text style={{ color: colors.textPrimary, fontWeight: '700', textAlign: 'center' }}>{t('activities.completedTitle')}</Text>
         {data.xpGained !== undefined ? <Text style={{ color: colors.xpText, textAlign: 'center', marginTop: 4 }}>+{data.xpGained} XP{data.variant === 'levelUp' && data.newLevel ? ` · ${t('home.level')} ${data.newLevel}` : ''}</Text> : null}
+        {data.activityId ? <UndoCompletionButton activityId={data.activityId} onDone={dismiss} /> : null}
       </View>
       {!reduceMotion
         ? particles.map((particle) => (

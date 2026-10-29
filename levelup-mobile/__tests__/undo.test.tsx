@@ -1,0 +1,91 @@
+import React from 'react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { UndoCompletionButton } from '../components/UndoCompletionButton';
+import { undoCompletion } from '../services/undo-completion';
+import { activityService } from '../services/activity.service';
+import { plannedActivityService } from '../services/plannedActivity.service';
+import { notificationService } from '../services/notification.service';
+import { useAuthStore } from '../stores/auth.store';
+import { useSettingsStore } from '../stores/settings.store';
+import { apiContext } from '../services/api-context';
+import { authService } from '../services/auth.service';
+import { invalidateData } from '../stores/data.store';
+jest.mock('../services/activity.service', () => ({ activityService: { undo: jest.fn() } }));
+jest.mock('../services/auth.service', () => ({ authService: { getMe: jest.fn() } }));
+jest.mock('../services/plannedActivity.service', () => ({ plannedActivityService: { getAll: jest.fn() } }));
+jest.mock('../services/notification.service', () => ({ notificationService: { reconcileReminders: jest.fn() } }));
+const user = { id: 'owner', username: 'Owner', email: 'owner@example.test', xp: 90, level: 1 };
+beforeEach(() => {
+  apiContext.setToken('token', 'owner');
+  useAuthStore.setState({ token: 'token', user, isLoading: false });
+  useSettingsStore.setState({ language: 'en', notificationsEnabled: true });
+  jest.mocked(activityService.undo).mockResolvedValue({ activityId: 'completion-1', undone: true, totalXp: 0, newLevel: 1 });
+  jest.mocked(authService.getMe).mockResolvedValue({ ...user, xp: 0 });
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+});
+test('Undo uses exact completion ID and accepts lower authoritative XP', async () => {
+  await undoCompletion('completion-1');
+  expect(activityService.undo).toHaveBeenCalledWith('completion-1');
+  expect(useAuthStore.getState().user?.xp).toBe(0);
+  expect(notificationService.reconcileReminders).toHaveBeenCalledWith([], 'en', true);
+});
+test('replayed receipt cannot overwrite more recent progress', async () => {
+  jest.mocked(authService.getMe).mockResolvedValue({ ...user, xp: 45 });
+  await undoCompletion('completion-1');
+  expect(useAuthStore.getState().user?.xp).toBe(45);
+});
+test('a reminder read started by Undo cannot restore tasks changed by a later mutation', async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(plannedActivityService.getAll).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const pending = undoCompletion('completion-1');
+  await waitFor(() => expect(plannedActivityService.getAll).toHaveBeenCalled());
+  invalidateData();
+  finish({ plannedActivities: [{ id: 'now-paused', status: 'ACTIVE' }] });
+  await pending;
+  expect(notificationService.reconcileReminders).not.toHaveBeenCalled();
+});
+test('network failure preserves displayed XP and reminders for explicit retry', async () => {
+  jest.mocked(activityService.undo).mockRejectedValueOnce(new Error('offline'));
+  await expect(undoCompletion('completion-1')).rejects.toThrow('offline');
+  expect(useAuthStore.getState().user?.xp).toBe(90);
+  expect(notificationService.reconcileReminders).not.toHaveBeenCalled();
+  await undoCompletion('completion-1');
+  expect(useAuthStore.getState().user?.xp).toBe(0);
+});
+test('old-session undo response cannot change the new account or its reminders', async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(activityService.undo).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const pending = undoCompletion('completion-1');
+  apiContext.setToken('new', 'other');
+  useAuthStore.setState({ token: 'new', user: { ...user, id: 'other' } });
+  finish({ undone: true, totalXp: 0 });
+  await pending;
+  expect(useAuthStore.getState().user?.id).toBe('other');
+  expect(authService.getMe).not.toHaveBeenCalled();
+  expect(notificationService.reconcileReminders).not.toHaveBeenCalled();
+});
+test('Undo button blocks duplicate taps and waits for the server', async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(activityService.undo).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const onDone = jest.fn();
+  await render(<UndoCompletionButton activityId="completion-1" onDone={onDone} />);
+  await fireEvent.press(screen.getByText('Undo completion'));
+  await fireEvent.press(screen.getByText('Undo completion'));
+  expect(activityService.undo).toHaveBeenCalledTimes(1);
+  expect(onDone).not.toHaveBeenCalled();
+  await act(async () => { finish({ undone: true, totalXp: 0 }); });
+  await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+});
+test('failed Undo remains retryable in the UI', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+  jest.mocked(activityService.undo).mockRejectedValueOnce(new Error('offline'));
+  const onDone = jest.fn();
+  await render(<UndoCompletionButton activityId="completion-1" onDone={onDone} />);
+  await fireEvent.press(screen.getByText('Undo completion'));
+  await waitFor(() => expect(alert).toHaveBeenCalled());
+  expect(onDone).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByText('Undo completion'));
+  await waitFor(() => expect(onDone).toHaveBeenCalled());
+  alert.mockRestore();
+});

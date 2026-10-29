@@ -36,7 +36,7 @@ export const updateGoal = async (req: Request, res: Response): Promise<void> => 
         (req.body.isCompleted !== undefined && typeof req.body.isCompleted !== 'boolean')) throw new HttpError(400, 'Invalid goal progress');
       if (req.body.isCompleted === true) currentCount = goal.targetCount;
       if (req.body.isCompleted === false && currentCount >= goal.targetCount) throw new HttpError(400, 'Reduce progress to reopen this goal');
-      return { goal: await tx.goal.update({ where: { id: goal.id }, data: { currentCount, isCompleted: currentCount >= goal.targetCount } }) };
+      return { goal: await tx.goal.update({ where: { id: goal.id }, data: { currentCount, progressBaseCount: currentCount, isCompleted: currentCount >= goal.targetCount, progressVersion: { increment: 1 } } }) };
     }));
   } catch (error) { sendError(res, error); }
 };

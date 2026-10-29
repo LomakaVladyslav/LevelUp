@@ -290,7 +290,8 @@ test('avatars are stored in PostgreSQL, replaced atomically and removed with the
   assert.equal(first.status, 200);
   const url = first.body.user.avatarUrl;
   assert.ok(url.startsWith('/api/avatars/'));
-  const downloaded = await request(app).get(url);
+  assert.equal((await request(app).get(url)).status, 401);
+  const downloaded = await request(app).get(url).set('Authorization', auth);
   assert.equal(downloaded.status, 200);
   assert.equal(downloaded.headers['content-type'], 'image/png');
   assert.deepEqual(downloaded.body, png);
@@ -298,9 +299,9 @@ test('avatars are stored in PostgreSQL, replaced atomically and removed with the
   assert.equal(second.status, 200);
   assert.notEqual(second.body.user.avatarUrl, url);
   assert.equal(await db.avatar.count({ where: { userId: user.id } }), 1);
-  assert.equal((await request(app).get(url)).status, 404);
+  assert.equal((await request(app).get(url).set('Authorization', auth)).status, 404);
   await request(app).delete('/api/auth/me').set('Authorization', auth);
-  assert.equal((await request(app).get(second.body.user.avatarUrl)).status, 404);
+  assert.equal((await request(app).get(second.body.user.avatarUrl).set('Authorization', auth)).status, 401);
 });
 
 test('fake images and oversized avatars are rejected before changing a profile', async () => {
@@ -346,4 +347,91 @@ test('a delayed completion for a previous day cannot complete the new day', asyn
   const today = new Date().toISOString().slice(0, 10);
   const retry = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth).send({ completionDate: today });
   assert.equal(retry.status, 201);
+});
+
+test('title-only task defaults to CUSTOM and supports a date without time', async () => {
+  const { auth } = await account();
+  const simple = await request(app).post('/api/planned-activities').set('Authorization', auth).send({ title: 'Quick task' });
+  assert.equal(simple.status, 201);
+  assert.equal(simple.body.plannedActivity.type, 'CUSTOM');
+  assert.equal(simple.body.plannedActivity.scheduleType, 'SIMPLE');
+  const dated = await request(app).post('/api/planned-activities').set('Authorization', auth).send({ title: 'Dated task', dueDate: '2027-01-20' });
+  assert.equal(dated.status, 201);
+  assert.equal(dated.body.plannedActivity.scheduleType, 'DATE');
+  assert.equal(dated.body.plannedActivity.dueTimeMinutes, null);
+});
+test('weekly occurrence rejects an unscheduled day and concurrent taps award once', async () => {
+  const { auth, user } = await account();
+  const today = new Date().getUTCDay();
+  const skipped = await plan(auth, { scheduleType: 'WEEKLY', weekdays: [(today + 1) % 7], timezone: 'UTC' });
+  assert.equal((await request(app).post(`/api/planned-activities/${skipped.id}/complete`).set('Authorization', auth)).status, 409);
+  const scheduled = await plan(auth, { scheduleType: 'WEEKLY', weekdays: [today], timezone: 'UTC' });
+  const results = await Promise.all(Array.from({ length: 5 }, () => request(app).post(`/api/planned-activities/${scheduled.id}/complete`).set('Authorization', auth).send({ completionDate: new Date().toISOString().slice(0, 10) })));
+  assert.equal(results.filter(r => r.status === 201).length, 1);
+  assert.equal(await db.activity.count({ where: { userId: user.id } }), 1);
+});
+test('schedule edit preserves todays occurrence, historical activity and rejects stale version', async () => {
+  const { auth } = await account();
+  const planned = await plan(auth, { scheduleType: 'DAILY' });
+  const edited = await request(app).patch(`/api/planned-activities/${planned.id}`).set('Authorization', auth).send({ scheduleType: 'WEEKLY', weekdays: [(new Date().getUTCDay() + 1) % 7] });
+  assert.equal(edited.status, 200);
+  const stale = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth).send({ updatedAt: planned.updatedAt });
+  assert.equal(stale.status, 409);
+  assert.equal((await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth).send({ updatedAt: edited.body.plannedActivity.updatedAt })).status, 201);
+});
+test('transactional undo rolls back XP, streak, achievements, goal and history exactly once', async () => {
+  const { auth, user } = await account();
+  const planned = await plan(auth, { scheduleType: 'DAILY' });
+  await db.goal.create({ data: { userId: user.id, title: 'One study task', type: 'STUDY', targetCount: 1 } });
+  const completed = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth);
+  const id = completed.body.activity.id;
+  const key = crypto.randomUUID();
+  const undo = () => request(app).post(`/api/activities/${id}/undo`).set('Authorization', auth).set('Idempotency-Key', key);
+  const [one, two] = await Promise.all([undo(), undo()]);
+  assert.equal(one.status, 200); assert.deepEqual(one.body, two.body);
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).xp, 0);
+  assert.equal(await db.activity.count({ where: { userId: user.id } }), 0);
+  assert.equal(await db.userAchievement.count({ where: { userId: user.id } }), 0);
+  assert.equal((await db.streak.findFirstOrThrow({ where: { userId: user.id } })).currentCount, 0);
+  assert.equal((await db.goal.findFirstOrThrow({ where: { userId: user.id } })).currentCount, 0);
+  assert.equal((await db.xpHistory.aggregate({ where: { userId: user.id }, _sum: { amount: true } }))._sum.amount, 0);
+  assert.equal((await request(app).post(`/api/activities/${id}/undo`).set('Authorization', auth)).status, 200);
+});
+test('old undo and completion retries cannot affect a newly completed same-date occurrence', async () => {
+  const { auth, user } = await account();
+  const planned = await plan(auth, { scheduleType: 'DAILY' });
+  const key = crypto.randomUUID();
+  const complete = () => request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth).set('Idempotency-Key', key);
+  const first = await complete();
+  await request(app).post(`/api/activities/${first.body.activity.id}/undo`).set('Authorization', auth);
+  assert.equal((await complete()).body.errorCode, 'COMPLETION_UNDONE');
+  const second = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth);
+  assert.equal(second.status, 201);
+  await request(app).post(`/api/activities/${first.body.activity.id}/undo`).set('Authorization', auth);
+  assert.equal(await db.activity.count({ where: { userId: user.id } }), 1);
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).xp, second.body.totalXp);
+});
+test('foreign and invalid undo are denied, including replay after an authorized undo', async () => {
+  const first = await account(); const second = await account();
+  const planned = await plan(first.auth);
+  const done = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', first.auth);
+  const undo = (auth: string) => request(app).post(`/api/activities/${done.body.activity.id}/undo`).set('Authorization', auth);
+  assert.equal((await undo(second.auth)).status, 404);
+  assert.equal((await undo(first.auth)).status, 200);
+  assert.equal((await undo(second.auth)).status, 404);
+  assert.equal((await request(app).post('/api/activities/invalid/undo').set('Authorization', first.auth)).status, 404);
+});
+test('undo write failure rolls back deletion and tombstone, then retry succeeds', async () => {
+  const { auth, user } = await account();
+  const planned = await plan(auth);
+  const done = await request(app).post(`/api/planned-activities/${planned.id}/complete`).set('Authorization', auth);
+  await db.$executeRawUnsafe(`ALTER TABLE "XpHistory" ADD CONSTRAINT "undo_failure" CHECK ("userId" <> '${user.id}' OR "amount" >= 0) NOT VALID`);
+  const undo = () => request(app).post(`/api/activities/${done.body.activity.id}/undo`).set('Authorization', auth).set('Idempotency-Key', 'undo-failure-retry');
+  try {
+    assert.equal((await undo()).status, 500);
+    assert.equal(await db.activity.count({ where: { userId: user.id } }), 1);
+    assert.equal(await db.completionUndo.count({ where: { userId: user.id } }), 0);
+    assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).xp, done.body.totalXp);
+  } finally { await db.$executeRaw`ALTER TABLE "XpHistory" DROP CONSTRAINT "undo_failure"`; }
+  assert.equal((await undo()).status, 200);
 });

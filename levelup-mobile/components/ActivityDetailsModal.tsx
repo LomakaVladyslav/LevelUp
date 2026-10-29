@@ -1,3 +1,4 @@
+import { UndoCompletionButton } from './UndoCompletionButton';
 import { useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -117,6 +118,7 @@ export function ActivityDetailsModal({ activity, visible, onClose }: Props) {
                   <Text style={styles.description}>{description}</Text>
                 </View>
               ) : null}
+              <UndoCompletionButton activityId={activity.id} onDone={onClose} />
             </ScrollView>
           </View>
         ) : null}

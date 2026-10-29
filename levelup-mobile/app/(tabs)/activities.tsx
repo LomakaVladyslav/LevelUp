@@ -1,3 +1,5 @@
+import { reconcileTaskReminders } from '../../services/reconcile-task-reminders';
+import { isRecurring, isScheduledOn, dateKeyInZone } from '../../services/reminder-time';
 import { EmptyState, pageContent } from '../../components/ScreenUi';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completePlannedActivity } from '../../services/complete-planned-activity';
@@ -143,7 +145,7 @@ const dateToMinutes = (date: Date | null) =>
 export default function ActivitiesScreen() {
   const t = useT();
   const router = useRouter();
-  const { create } = useLocalSearchParams<{ create?: string }>();
+  const { create, taskId } = useLocalSearchParams<{ create?: string; taskId?: string }>();
   const consumedCreate = useRef(false);
   const theme = useTheme();
   const { colors, activityColor } = theme;
@@ -161,8 +163,9 @@ export default function ActivitiesScreen() {
   const formOwner = useRef(userId);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingActivity, setEditingActivity] = useState<PlannedActivity | null>(null);
-  const [selectedType, setSelectedType] = useState<ActivityType>('STUDY');
+  const [selectedType, setSelectedType] = useState<ActivityType>('CUSTOM');
   const [scheduleType, setScheduleType] = useState<PlannedActivityScheduleType>('SIMPLE');
+  const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState<Date | null>(null);
@@ -190,6 +193,7 @@ export default function ActivitiesScreen() {
   const scheduleOptions: { type: PlannedActivityScheduleType; label: string }[] = [
     { type: 'SIMPLE', label: t('activities.scheduleSimple') },
     { type: 'DAILY', label: t('activities.scheduleDaily') },
+    { type: 'WEEKLY', label: t('taskEngine.selectedDays') },
     { type: 'DATE', label: t('activities.scheduleDate') },
   ];
 
@@ -212,6 +216,8 @@ export default function ActivitiesScreen() {
         return t('activities.scheduleSimple');
       case 'DAILY':
         return t('activities.scheduleDaily');
+      case 'WEEKLY':
+        return t('taskEngine.selectedDays');
       case 'DATE':
         return t('activities.scheduleDate');
     }
@@ -231,15 +237,16 @@ export default function ActivitiesScreen() {
 
   useEffect(() => {
     if (!modalVisible || editingActivity || !userId || submitting || formOwner.current !== userId) return;
-    const draft = { title, description, selectedType, scheduleType, dueDate: dueDate?.toISOString(), dueTime: dueTime?.toISOString() };
+    const draft = { title, description, selectedType, scheduleType, weekdays, dueDate: dueDate?.toISOString(), dueTime: dueTime?.toISOString() };
     // Queue every draft snapshot immediately; closing or backgrounding cannot cancel the latest text.
     void userData.saveDraft(userId, JSON.stringify(draft)).catch(() => undefined);
-  }, [modalVisible, editingActivity, userId, submitting, title, description, selectedType, scheduleType, dueDate, dueTime]);
+  }, [modalVisible, editingActivity, userId, submitting, title, description, selectedType, scheduleType, weekdays, dueDate, dueTime]);
 
   const resetForm = useCallback((activity?: PlannedActivity) => {
     setEditingActivity(activity ?? null);
-    setSelectedType(activity?.type ?? 'STUDY');
+    setSelectedType(activity?.type ?? 'CUSTOM');
     setScheduleType(activity?.scheduleType ?? 'SIMPLE');
+    setWeekdays(activity?.weekdays?.length ? activity.weekdays : [1, 2, 3, 4, 5]);
     setTitle(activity?.title ?? '');
     setDescription(activity?.description ?? '');
     setDueDate(activity?.dueDate ? parseStoredDate(activity.dueDate) : null);
@@ -269,9 +276,10 @@ export default function ActivitiesScreen() {
       const draft = value ? JSON.parse(value) : null;
       if (session !== apiContext.get().sessionVersion) return;
       if (draft && typeof draft.title === 'string' && typeof draft.description === 'string') {
+        if (Array.isArray(draft.weekdays) && draft.weekdays.length && draft.weekdays.every((d: number) => Number.isInteger(d) && d >= 0 && d <= 6)) setWeekdays(draft.weekdays);
         setTitle(draft.title); setDescription(draft.description);
         if (['STUDY', 'WORKOUT', 'HABIT', 'CUSTOM'].includes(draft.selectedType)) setSelectedType(draft.selectedType);
-        if (['SIMPLE', 'DAILY', 'DATE'].includes(draft.scheduleType)) setScheduleType(draft.scheduleType);
+        if (['SIMPLE', 'DAILY', 'WEEKLY', 'DATE'].includes(draft.scheduleType)) setScheduleType(draft.scheduleType);
         if (draft.dueDate && Number.isFinite(Date.parse(draft.dueDate))) setDueDate(new Date(draft.dueDate));
         if (draft.dueTime && Number.isFinite(Date.parse(draft.dueTime))) setDueTime(new Date(draft.dueTime));
       }
@@ -287,6 +295,14 @@ export default function ActivitiesScreen() {
     setShowPaused(false);
     void openCreateModal();
   }, [create, router, openCreateModal]);
+
+  useEffect(() => {
+    if (!taskId || !data) return;
+    const task = data.plannedActivities.find((item) => item.id === taskId);
+    router.setParams({ taskId: undefined });
+    if (task) { resetForm(task); setShowPaused(task.status === 'DISABLED'); setModalVisible(true); }
+    else Alert.alert(t('taskEngine.unavailable'));
+  }, [taskId, data, router, resetForm, t]);
 
   const finishMenuDismiss = () => {
     const action = pendingMenuAction.current;
@@ -325,7 +341,7 @@ export default function ActivitiesScreen() {
 
     menuButton.measureInWindow((x, y, width, height) => {
       const menuWidth = 208;
-      const menuHeight = activity.scheduleType === 'DAILY' ? 156 : 108;
+      const menuHeight = isRecurring(activity.scheduleType) ? 156 : 108;
 
       setMenuPosition({
         top: Math.max(
@@ -362,13 +378,15 @@ export default function ActivitiesScreen() {
       return;
     }
 
+    if (scheduleType === 'WEEKLY' && !weekdays.length) { Alert.alert(t('common.error'), t('taskEngine.chooseDays')); return; }
     const payload: PlannedActivityInput = {
       type: selectedType,
       title: title.trim(),
       description: description.trim() || null,
       scheduleType,
+      weekdays: scheduleType === 'WEEKLY' ? weekdays : [],
       dueDate: scheduleType === 'DATE' && dueDate ? dateToDateOnly(dueDate) : null,
-      dueTimeMinutes: dateToMinutes(dueTime),
+      dueTimeMinutes: scheduleType === 'SIMPLE' ? null : dateToMinutes(dueTime),
       timezone: getDeviceTimezone(),
     };
 
@@ -393,7 +411,8 @@ export default function ActivitiesScreen() {
       }
       resetForm();
       void loadActivities();
-      void notificationService.rescheduleActivityReminder(result.plannedActivity, language).catch(handleNotificationError);
+      void reconcileTaskReminders(result.plannedActivity.id).catch(handleNotificationError);
+
     } catch (e: any) {
       if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(e, t, 'activities.saveFailed'));
     } finally {
@@ -403,7 +422,7 @@ export default function ActivitiesScreen() {
   };
 
   const handleComplete = async (activity: PlannedActivity) => {
-    if (mutationRef.current || (activity.scheduleType === 'DAILY' && activity.isCompletedToday)) return;
+    if (mutationRef.current || (isRecurring(activity.scheduleType) && activity.isCompletedToday)) return;
     mutationRef.current = true;
     setCompletingId(activity.id);
     const session = apiContext.get().sessionVersion;
@@ -413,11 +432,11 @@ export default function ActivitiesScreen() {
       setData((current) => ({
         plannedActivities: (current?.plannedActivities ?? []).map((item) => item.id !== activity.id ? item : {
           ...item, isCompletedToday: true, completedTodayAt: result.activity.completedAt,
-          status: item.scheduleType === 'DAILY' ? 'ACTIVE' : 'COMPLETED',
+          status: isRecurring(item.scheduleType) ? 'ACTIVE' : 'COMPLETED',
         }),
         todayProgress: current?.todayProgress ?? EMPTY_TODAY_PROGRESS,
       }));
-      setCompletionCelebration({ variant: result.levelUp ? 'levelUp' : result.newAchievements.length ? 'achievement' : 'completed', xpGained: result.xpGained + (result.achievementXpGained ?? 0), newLevel: result.newLevel });
+      setCompletionCelebration({ activityId: result.activity.id, variant: result.levelUp ? 'levelUp' : result.newAchievements.length ? 'achievement' : 'completed', xpGained: result.xpGained + (result.achievementXpGained ?? 0), newLevel: result.newLevel });
       void loadActivities();
     } catch (e: any) {
       if (session === apiContext.get().sessionVersion) {
@@ -440,11 +459,12 @@ export default function ActivitiesScreen() {
     setCompletingId(activity.id);
     const session = apiContext.get().sessionVersion;
     try {
-      const result = await plannedActivityService.update(activity.id, { status: 'ACTIVE', updatedAt: activity.updatedAt });
+      await plannedActivityService.update(activity.id, { status: 'ACTIVE', updatedAt: activity.updatedAt });
       if (session !== apiContext.get().sessionVersion) return;
       removeVisibleActivity(activity.id, 'ACTIVE');
       void loadActivities();
-      void notificationService.rescheduleActivityReminder(result.plannedActivity, language).catch(handleNotificationError);
+      void reconcileTaskReminders(activity.id).catch(handleNotificationError);
+
     } catch (failure) { if (session === apiContext.get().sessionVersion) Alert.alert(t('common.error'), getApiErrorMessage(failure, t, 'common.somethingWrong')); }
     finally { mutationRef.current = false; setCompletingId(null); }
   };
@@ -515,6 +535,7 @@ export default function ActivitiesScreen() {
 
   const activityMeta = (activity: PlannedActivity) => {
     const parts = [activityLabel(activity.type), scheduleLabel(activity.scheduleType)];
+    if (activity.scheduleType === 'WEEKLY') parts.push((activity.weekdays ?? []).map(day => new Intl.DateTimeFormat(getLocale(language), { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 0, 4 + day)))).join(', '));
 
     if (activity.scheduleType === 'DATE' && activity.dueDate) {
       parts.push(formatDate(activity.dueDate));
@@ -612,8 +633,9 @@ export default function ActivitiesScreen() {
           loading ? <ActivityIndicator size="large" color={colors.primary} /> : !error ? <EmptyState title={t(showPaused ? 'activities.pausedEmpty' : 'activities.active')} message={t(showPaused ? 'activities.pausedHelp' : 'activities.noPlannedActivities')} icon={showPaused ? 'pause-circle-outline' : 'checkbox-outline'} /> : null
         }
         renderItem={({ item: activity }) => {
-          const completedToday = activity.status === 'ACTIVE' && activity.scheduleType === 'DAILY' && activity.isCompletedToday;
-          const actionLabel = t(completingId === activity.id ? 'activities.completing' : completedToday ? 'activities.completed' : activity.status === 'DISABLED' ? 'activities.resume' : 'activities.complete');
+          const completedToday = activity.status === 'ACTIVE' && isRecurring(activity.scheduleType) && activity.isCompletedToday;
+          const notScheduled = activity.status === 'ACTIVE' && isRecurring(activity.scheduleType) && !isScheduledOn(activity, dateKeyInZone(new Date(), activity.timezone));
+          const actionLabel = notScheduled ? t('taskEngine.notScheduled') : t(completingId === activity.id ? 'activities.completing' : completedToday ? 'activities.completed' : activity.status === 'DISABLED' ? 'activities.resume' : 'activities.complete');
 
           return (
             <View style={styles.card}>
@@ -657,7 +679,7 @@ export default function ActivitiesScreen() {
                     </View>
                   </View>
                   <Text style={styles.rowMeta}>{activityMeta(activity)}</Text>
-                  {activity.scheduleType === 'DAILY' ? (
+                  {isRecurring(activity.scheduleType) ? (
                     <Text style={styles.streakText}>
                       {streakLabel(activity.streakDays ?? 0)} 🔥
                     </Text>
@@ -679,14 +701,14 @@ export default function ActivitiesScreen() {
 
               <TouchableOpacity
                 accessibilityLabel={`${actionLabel}: ${activity.displayTitle || activity.title}`}
-                accessibilityRole="button" accessibilityState={{ disabled: completedToday || Boolean(completingId), busy: completingId === activity.id }}
+                accessibilityRole="button" accessibilityState={{ disabled: completedToday || notScheduled || Boolean(completingId), busy: completingId === activity.id }}
                 style={[
                   styles.completeButton,
                   completedToday && styles.completedButton,
                   completingId === activity.id && styles.disabledButton,
                 ]}
                 onPress={() => activity.status === 'DISABLED' ? handleResume(activity) : handleComplete(activity)}
-                disabled={completedToday || Boolean(completingId)}
+                disabled={completedToday || notScheduled || Boolean(completingId)}
                 activeOpacity={0.85}
               >
                 {completedToday ? (
@@ -760,7 +782,7 @@ export default function ActivitiesScreen() {
                   {t('common.delete')}
                 </Text>
               </TouchableOpacity>
-              {menuActivity.scheduleType === 'DAILY' && menuActivity.status === 'ACTIVE' ? (
+              {isRecurring(menuActivity.scheduleType) && menuActivity.status === 'ACTIVE' ? (
                 <TouchableOpacity
                   accessibilityRole="button"
                   style={styles.contextMenuItem}
@@ -813,7 +835,7 @@ export default function ActivitiesScreen() {
                 placeholderTextColor={colors.textMuted}
               />
 
-              <Text style={styles.label}>{t('activities.type')}</Text>
+              <Text style={styles.label}>{t('taskEngine.categoryOptional')}</Text>
               <View style={styles.typeGrid}>
                 {activityTypes.map(({ type, label }) => (
                   <TouchableOpacity
@@ -849,7 +871,7 @@ export default function ActivitiesScreen() {
 
               <Text style={styles.label}>{t('activities.scheduleType')}</Text>
               <View style={styles.typeGrid}>
-                {scheduleOptions.map(({ type, label }) => (
+                {scheduleOptions.filter(({ type }) => !editingActivity || !isRecurring(editingActivity.scheduleType) || isRecurring(type)).map(({ type, label }) => (
                   <TouchableOpacity
                     key={type}
                     accessibilityRole="radio" accessibilityState={{ checked: scheduleType === type }}
@@ -862,6 +884,7 @@ export default function ActivitiesScreen() {
                       if (submittingRef.current) return;
                       setScheduleType(type);
                       if (type !== 'DATE') setDueDate(null);
+                      if (type === 'SIMPLE') { setDueTime(null); setPickerMode(null); }
                     }}
                   >
                     <Text style={[
@@ -872,6 +895,16 @@ export default function ActivitiesScreen() {
                 ))}
               </View>
 
+              {scheduleType === 'WEEKLY' ? <View>
+                <TouchableOpacity accessibilityRole="button" onPress={() => setWeekdays([1, 2, 3, 4, 5])}><Text style={styles.label}>{t('taskEngine.weekdays')}</Text></TouchableOpacity>
+                <View style={styles.typeGrid}>{[1, 2, 3, 4, 5, 6, 0].map((day) => <TouchableOpacity key={day}
+                  accessibilityRole="checkbox" accessibilityState={{ checked: weekdays.includes(day) }}
+                  style={[styles.typeChip, weekdays.includes(day) && styles.selectedScheduleChip]}
+                  onPress={() => setWeekdays((days) => days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort())}>
+                  <Text style={[styles.typeChipText, weekdays.includes(day) && { color: colors.textOnPrimary }]}>{new Intl.DateTimeFormat(getLocale(language), { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 0, 4 + day)))}</Text>
+                </TouchableOpacity>)}</View>
+              </View> : null}
+              {editingActivity && isRecurring(editingActivity.scheduleType) ? <Text style={styles.label}>{t('taskEngine.futureSchedule')}</Text> : null}
               {scheduleType === 'DATE' ? (
                 <>
                   <Text style={styles.label}>{t('activities.date')}</Text>
@@ -887,6 +920,7 @@ export default function ActivitiesScreen() {
                 </>
               ) : null}
 
+              {scheduleType !== 'SIMPLE' ? <>
               <Text style={styles.label}>{t('activities.timeOptional')}</Text>
               <View style={styles.timeRow}>
                 <TouchableOpacity
@@ -910,6 +944,8 @@ export default function ActivitiesScreen() {
                   </TouchableOpacity>
                 ) : null}
               </View>
+
+              </> : null}
 
               {pickerMode === 'date' ? (
                 <DateTimePicker

@@ -1,6 +1,20 @@
 import type { TranslationDictionary } from './types';
 
 export const es: TranslationDictionary = {
+  "taskEngine.notScheduled": "Not scheduled today",
+  "taskEngine.undo": "Undo completion",
+  "taskEngine.selectedDays": "Selected weekdays",
+  "taskEngine.weekdays": "Monday–Friday",
+  "taskEngine.chooseDays": "Choose at least one weekday.",
+  "taskEngine.categoryOptional": "Category (optional)",
+  "taskEngine.futureSchedule": "Schedule changes and resume start tomorrow. Pausing stops reminders immediately.",
+  "taskEngine.unavailable": "This task is no longer available.",
+  "taskEngine.permissionGranted": "System permission: allowed",
+  "taskEngine.permissionDenied": "System permission: denied. Enable notifications in system settings.",
+  "taskEngine.permissionUnknown": "System permission: not requested",
+  "taskEngine.reminderHelp": "Task reminders follow each task’s time and timezone. Open the app regularly to replenish upcoming reminders.",
+  "taskEngine.systemSettings": "Open system settings",
+
   "home.streakHelp": "Completa al menos una tarea cada día. Varias tareas el mismo día no añaden más días a la racha.",
   "stats.xpIncludesRewards": "Los XP incluyen tareas completadas y recompensas por logros.",
   "home.firstTask": "Crea tu primera tarea y complétala para ganar XP.",

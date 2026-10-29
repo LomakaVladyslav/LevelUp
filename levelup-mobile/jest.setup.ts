@@ -35,7 +35,12 @@ jest.mock("expo-router", () => {
 });
 
 jest.mock("expo-notifications", () => ({
-  AndroidImportance: { DEFAULT: "default" },
+  getLastNotificationResponseAsync: jest.fn(async () => null),
+  clearLastNotificationResponseAsync: jest.fn(async () => undefined),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  AndroidImportance: { DEFAULT: "default", NONE: 0 },
+  IosAuthorizationStatus: { PROVISIONAL: 3 },
+  getNotificationChannelAsync: jest.fn(async () => null),
   cancelScheduledNotificationAsync: jest.fn(),
   cancelAllScheduledNotificationsAsync: jest.fn(),
   dismissAllNotificationsAsync: jest.fn(),
