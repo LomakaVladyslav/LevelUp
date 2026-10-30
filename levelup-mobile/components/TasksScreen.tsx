@@ -1267,5 +1267,3 @@ const createStyles = (theme: AppTheme) => {
   cancelText: { ...typography.body, color: colors.textSecondary, textAlign: 'center' },
   });
 };
-
-
