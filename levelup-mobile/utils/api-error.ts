@@ -65,7 +65,6 @@ export const getApiErrorMessage = (
   if (translationKey) return t(translationKey);
   if (!error?.response && ['ERR_NETWORK', 'ECONNABORTED', 'ETIMEDOUT'].includes(error?.code)) return t('common.networkError');
   if (error?.response?.status >= 500) return t(fallbackKey);
-  return typeof message === 'string' && message.trim()
-    ? message
-    : t(fallbackKey);
+  // Only known messages may reach the UI; unknown server text can contain implementation details.
+  return t(fallbackKey);
 };

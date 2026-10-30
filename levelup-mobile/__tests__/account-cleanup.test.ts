@@ -119,3 +119,17 @@ test('partial secure deletion keeps owner evidence until the retry removes all c
   expect(await SecureStore.getItemAsync('levelup.session')).toBeNull();
   expect(await SecureStore.getItemAsync('levelup.session.token')).toBeNull();
 });
+
+test('Delete Account clears persisted task/history reads, edit drafts and reminder choices through auth cleanup', async () => {
+  const owner = 'delete-stage3-auth';
+  await useAuthStore.getState().setAuth('token', user(owner));
+  await userData.saveCache(owner, 'tasks:en', { plannedActivities: [] });
+  await userData.saveCache(owner, 'history:uk', { activities: [] });
+  await userData.saveDraft(owner, 'unsaved edit', 'task');
+  await userData.setReminder(owner, 'task', false);
+  await userData.saveCache('kept-stage3-auth', 'tasks:en', ['keep']);
+  await useAuthStore.getState().deleteAccount();
+  expect((await AsyncStorage.getAllKeys()).some(key => key.startsWith(`userData:${owner}:`))).toBe(false);
+  expect((await userData.readCache('kept-stage3-auth', 'tasks:en'))?.data).toEqual(['keep']);
+  expect(useAuthStore.getState().user).toBeNull();
+});

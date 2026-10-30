@@ -1,3 +1,4 @@
+import { userData } from '../services/user-data';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { notificationService, taskFromNotification } from '../services/notification.service';
@@ -168,4 +169,18 @@ test('disabled Android reminder channel is reported as denied and cancels pendin
     await notificationService.reconcileReminders([task()], 'en', true);
     expect(scheduled.size).toBe(0);
   } finally { Object.defineProperty(Platform, 'OS', { value: previous, configurable: true }); }
+});
+
+test('per-task reminder preference cancels only that task and survives reconciliation', async () => {
+  const muted = task(); const other = task({ id: 'other' });
+  await notificationService.reconcileReminders([muted, other], 'en', true);
+  await userData.setReminder(muted.userId, muted.id, false);
+  await notificationService.reconcileReminders([muted, other], 'en', true);
+  expect([...scheduled.values()].every(item => item.content.data?.activityId === 'other')).toBe(true);
+  expect(scheduled.size).toBeGreaterThan(0);
+  await notificationService.rescheduleActivityReminder(muted, 'en');
+  expect([...scheduled.values()].some(item => item.content.data?.activityId === muted.id)).toBe(false);
+  await userData.setReminder(muted.userId, muted.id, true);
+  await notificationService.reconcileReminders([muted, other], 'en', true);
+  expect([...scheduled.values()].some(item => item.content.data?.activityId === muted.id)).toBe(true);
 });

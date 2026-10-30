@@ -1,3 +1,4 @@
+import { CacheNotice } from '../../components/CacheNotice';
 import { useRouter } from 'expo-router';
 import { ActionButton, EmptyState, pageContent } from '../../components/ScreenUi';
 import { useScreenResource } from '../../hooks/useScreenResource';
@@ -34,7 +35,7 @@ export default function ActivityHistoryScreen() {
   const { colors } = theme;
   const styles = useMemo(() => createStyles(theme), [theme]);
   const language = useSettingsStore((s) => s.language);
-  const { data, error, loading, refreshing, reload, setData, getVersion } = useScreenResource(() => activityService.getAll(1));
+  const { data, error, loading, refreshing, reload, setData, getVersion, cached, savedAt } = useScreenResource(() => activityService.getAll(1), 'history');
   const activities = data?.activities ?? [];
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -83,7 +84,7 @@ export default function ActivityHistoryScreen() {
         data={activities}
         keyExtractor={(activity) => activity.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setPageError(null); void reload(); }} />}
-        ListHeaderComponent={<ResourceError error={error} retry={() => { void reload(); }} />}
+        ListHeaderComponent={<><CacheNotice cached={cached} savedAt={savedAt} error={error} /><ResourceError error={error} retry={() => { void reload(); }} /></>}
         ListEmptyComponent={!error ? <EmptyState title={t('activities.historyEmpty')} message={t('home.noActivities')} action={{ label: t('home.allTasks'), onPress: () => router.navigate('/(tabs)/activities') }} /> : null}
         renderItem={({ item: activity }) => (
             <TouchableOpacity

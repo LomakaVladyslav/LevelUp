@@ -46,6 +46,7 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      initialRouteName="index"
       backBehavior="history"
       screenOptions={({ route }) => ({
         tabBarActiveTintColor: colors.primary,
@@ -54,12 +55,13 @@ export default function TabLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
         },
-        headerLeft: ['activity-history', 'achievements', 'settings', 'ai'].includes(route.name) ? () => (
+        headerLeft: ['activity-history', 'achievements', 'settings', 'ai', 'profile'].includes(route.name) ? () => (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.back')} onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
             <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         ) : undefined,
         tabBarHideOnKeyboard: true,
+        headerRight: ['index', 'activities', 'stats'].includes(route.name) ? () => <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('tabs.profile')} onPress={() => router.push('/(tabs)/profile')} style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}><Ionicons name="person-circle-outline" size={28} color={colors.textPrimary} /></TouchableOpacity> : undefined,
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.textPrimary,
         // The native navigation bar has fixed height; body text scales freely.
@@ -80,11 +82,11 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: t('tabs.home'), tabBarLabel: t('tabs.home'), tabBarAccessibilityLabel: t('tabs.home') }}
+        options={{ title: t('daily.today'), tabBarLabel: t('daily.today'), tabBarAccessibilityLabel: t('daily.today') }}
       />
       <Tabs.Screen
         name="activities"
-        options={{ title: t('tabs.log'), tabBarLabel: t('tabs.log'), tabBarAccessibilityLabel: t('tabs.log') }}
+        options={{ title: t('daily.tasks'), tabBarLabel: t('daily.tasks'), tabBarAccessibilityLabel: t('daily.tasks') }}
       />
       <Tabs.Screen
         name="activity-history"
@@ -100,14 +102,13 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="stats"
-        options={{ title: t('tabs.stats'), tabBarLabel: t('tabs.stats'), tabBarAccessibilityLabel: t('tabs.stats') }}
+        options={{ title: t('daily.progress'), tabBarLabel: t('daily.progress'), tabBarAccessibilityLabel: t('daily.progress') }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: t('tabs.profile'),
-          tabBarLabel: t('tabs.profile'),
-          tabBarAccessibilityLabel: t('tabs.profile'),
+          href: null,
         }}
       />
       <Tabs.Screen

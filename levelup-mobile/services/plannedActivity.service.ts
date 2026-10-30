@@ -14,14 +14,14 @@ type TaskList = { plannedActivities: PlannedActivity[]; todayProgress: TodayProg
 const reads = new Map<string, Promise<TaskList>>();
 
 export const plannedActivityService = {
-  getAll: (includeDisabled = false): Promise<TaskList> => {
+  getAll: (includeDisabled = false, includeInactive = false): Promise<TaskList> => {
     const context = apiContext.get();
-    const key = `${context.sessionVersion}:${context.language}:${getDeviceTimezone()}:${useDataRevision.getState().revision}:${includeDisabled}`;
+    const key = `${context.sessionVersion}:${context.language}:${getDeviceTimezone()}:${useDataRevision.getState().revision}:${includeDisabled}:${includeInactive}`;
     const existing = reads.get(key);
     if (existing) return existing;
     // Home and reminder reconciliation share only in-flight reads. A write,
     // account/language change or later refresh always gets a fresh response.
-    const request = api.get('/planned-activities', { params: { includeDisabled } })
+    const request = api.get('/planned-activities', { params: { includeDisabled, includeInactive } })
       .then(({ data }) => data as TaskList).finally(() => { reads.delete(key); });
     reads.set(key, request);
     return request;

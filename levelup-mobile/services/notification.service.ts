@@ -1,3 +1,4 @@
+import { userData } from './user-data';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
@@ -95,7 +96,7 @@ const requestPermission = () => {
   return permissionRequest;
 };
 async function scheduleActivityReminder(activity: PlannedActivity, language: Language) {
-  if (!remindersEnabled) return cancelActivityReminder(activity.id);
+  if (!remindersEnabled || !await userData.reminderEnabled(activity.userId, activity.id)) return cancelActivityReminder(activity.id);
   const reminders = buildReminders(activity, language);
   if (!reminders.length) return cancelActivityReminder(activity.id);
   if (await getPermissionStatus() !== 'granted') return cancelActivityReminder(activity.id);
@@ -114,7 +115,8 @@ async function reconcileReminders(activities: PlannedActivity[], language: Langu
   const permissionStatus = await getPermissionStatus();
   const previous = await Notifications.getAllScheduledNotificationsAsync();
   const permitted = permissionStatus === 'granted';
-  await applyReminders(enabled && permitted ? activities.flatMap((activity) => buildReminders(activity, language)) : [], previous);
+  const allowed = await Promise.all(activities.map(async activity => await userData.reminderEnabled(activity.userId, activity.id) ? activity : null));
+  await applyReminders(enabled && permitted ? allowed.filter((activity): activity is PlannedActivity => activity !== null).flatMap((activity) => buildReminders(activity, language)) : [], previous);
 }
 
 // Treat notification data as untrusted; never route across an account boundary.

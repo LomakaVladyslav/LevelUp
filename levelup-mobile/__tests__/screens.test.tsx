@@ -24,6 +24,7 @@ import type { ActivityResult, PlannedActivity } from '../types';
 jest.mock('../services/activity.service', () => ({
   activityService: {
     getAll: jest.fn(),
+    undo: jest.fn(),
   },
 }));
 
@@ -215,7 +216,7 @@ test('registration shows an atomic server uniqueness error inline', async () => 
   });
 });
 
-test('home screen renders empty activity state after loading dashboard data', async () => {
+test('Today renders a calm empty state without KPI requests', async () => {
   jest.mocked(statsService.getOverview).mockResolvedValue({
     user: {
       id: 'user-1',
@@ -238,7 +239,7 @@ test('home screen renders empty activity state after loading dashboard data', as
 
   await waitFor(() => {
     expect(
-      screen.getByText('Completed tasks and earned XP will appear here.'),
+      screen.getByText('You’re all set for today'),
     ).toBeTruthy();
   });
 });
@@ -253,7 +254,7 @@ test('activities screen renders empty planned activity state after loading', asy
 
   await waitFor(() => {
     expect(
-      screen.getByText('No planned activities yet. Create one to start.'),
+      screen.getByText('No matching tasks'),
     ).toBeTruthy();
   });
 });
@@ -272,9 +273,9 @@ test('activities create modal does not show the star badge text field', async ()
 
   await fireEvent.press(screen.getByText('Create activity'));
 
-  await waitFor(() => {
-    expect(screen.getByText('Category (optional)')).toBeTruthy();
-  });
+  expect(screen.queryByText('Category (optional)')).toBeNull();
+  await fireEvent.press(screen.getByText('More options'));
+  expect(screen.getByText('Category (optional)')).toBeTruthy();
   expect(screen.queryByText('Star badge text')).toBeNull();
   expect(screen.queryByPlaceholderText('Example: 20 focused minutes')).toBeNull();
 });
@@ -322,8 +323,9 @@ test('Home shows an actionable task while optional recommendations and progress 
   await render(<HomeScreen />);
   await waitFor(() => expect(screen.getByText(/Read TypeScript/)).toBeTruthy());
   expect(screen.getByText('Complete')).toBeTruthy();
-  await fireEvent.press(screen.getByText('+ Create activity'));
-  expect(useRouter().navigate).toHaveBeenCalledWith({ pathname: '/(tabs)/activities', params: { create: '1' } });
+  await fireEvent.press(screen.getByText('Quick add'));
+  expect(screen.getByLabelText('Title')).toBeTruthy();
+  expect(useRouter().navigate).not.toHaveBeenCalled();
 });
 
 test('Home completion blocks duplicate taps, preserves the task on failure and retries successfully', async () => {
@@ -397,8 +399,8 @@ test('Home offers one recovery action when both progress and tasks fail', async 
   await fireEvent.press(screen.getByText('Retry'));
   await waitFor(() => expect(screen.queryByText('Retry')).toBeNull());
   expect(plannedActivityService.getAll).toHaveBeenCalledTimes(2);
-  expect(statsService.getOverview).toHaveBeenCalledTimes(2);
-  expect(screen.getByText('Total XP: 0')).toBeTruthy();
+  expect(statsService.getOverview).not.toHaveBeenCalled();
+  expect(screen.getByText('You’re all set for today')).toBeTruthy();
 });
 
 test('progress clarifies its time period and includes direct routes to history and achievements', async () => {
@@ -462,12 +464,13 @@ test('a paused daily task can resume even if it was completed earlier today', as
 });
 
 
-test('slow history never blocks Home XP and streak', async () => {
-  jest.mocked(activityService.getAll).mockReturnValue(new Promise(() => {}));
+test('Today does not request history until Completed is expanded', async () => {
   await render(<HomeScreen />);
-  expect(screen.getByText('Total XP: 0')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Day streak' }).props.accessibilityValue).toEqual({ text: '0' });
-  expect(screen.getByRole('button', { name: 'Progress' }).props.accessibilityValue).toEqual({ text: 'Level 1. Total XP: 0' });
+  expect(activityService.getAll).not.toHaveBeenCalled();
+  expect(statsService.getOverview).not.toHaveBeenCalled();
+  expect(recommendationService.getAll).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByText('Completed today +'));
+  await waitFor(() => expect(activityService.getAll).toHaveBeenCalledWith(1));
 });
 
 test('a quick task needs only a title and defaults to the optional CUSTOM category', async () => {
@@ -483,6 +486,7 @@ test('selected weekdays exposes the Monday-Friday preset without requiring a cat
   await render(<ActivitiesScreen />);
   await fireEvent.press(await screen.findByText('Create activity'));
   await fireEvent.changeText(screen.getByLabelText('Title'), 'Walk');
+  await fireEvent.press(screen.getByText('More options'));
   await fireEvent.press(screen.getByText('Selected weekdays'));
   await fireEvent.press(screen.getByText('Monday–Friday'));
   await fireEvent.press(screen.getByText('Save'));
@@ -493,4 +497,151 @@ test('notification route opens the identified task rather than another list item
   jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
   await render(<ActivitiesScreen />);
   await waitFor(() => expect(screen.getByLabelText('Title').props.value).toBe(plannedActivity.title));
+});
+
+test('Today Quick Add saves today with title only and clears its draft', async () => {
+  jest.mocked(plannedActivityService.create).mockResolvedValue({ plannedActivity: { ...plannedActivity, type: 'CUSTOM' } });
+  await render(<HomeScreen />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Quick add' }));
+  expect(screen.queryByLabelText('Description (optional)')).toBeNull();
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Call mum');
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Call mum', type: 'CUSTOM', scheduleType: 'DATE', dueDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) })));
+  await waitFor(async () => expect(await AsyncStorage.getItem('activityDraft:user-1')).toBeNull());
+});
+test('Tasks search filters the loaded description without another API request', async () => {
+  const other = { ...plannedActivity, id: 'other', title: 'Walk', displayTitle: 'Walk', description: 'Outside', scheduleType: 'DAILY' as const };
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [{ ...plannedActivity, description: 'Handbook' }, other], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<ActivitiesScreen />);
+  const reads = jest.mocked(plannedActivityService.getAll).mock.calls.length;
+  await fireEvent.changeText(screen.getByLabelText('Search tasks'), 'handbook');
+  expect(screen.getByText('Read TypeScript')).toBeTruthy();
+  expect(screen.queryByText('Walk')).toBeNull();
+  await fireEvent.changeText(screen.getByLabelText('Search tasks'), '');
+  await fireEvent.press(screen.getByRole('tab', { name: 'Recurring' }));
+  expect(screen.getByText('Walk')).toBeTruthy();
+  expect(screen.queryByText('Read TypeScript')).toBeNull();
+  await fireEvent.press(screen.getByRole('tab', { name: 'No date' }));
+  expect(screen.getByText('Read TypeScript')).toBeTruthy();
+  expect(screen.queryByText('Walk')).toBeNull();
+  expect(plannedActivityService.getAll).toHaveBeenCalledTimes(reads);
+});
+test('edit draft survives closing and remounting, saves with optimistic version, and clears only that draft', async () => {
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  const first = await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Edited offline');
+  await fireEvent.press(screen.getByText('Cancel'));
+  await first.unmount();
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  await waitFor(() => expect(screen.getByDisplayValue('Edited offline')).toBeTruthy());
+  expect(screen.getByText('Unsaved draft restored')).toBeTruthy();
+  jest.mocked(plannedActivityService.update).mockResolvedValue({ plannedActivity: { ...plannedActivity, title: 'Edited offline' } });
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.update).toHaveBeenCalledWith(plannedActivity.id, expect.objectContaining({ title: 'Edited offline', updatedAt: plannedActivity.updatedAt })));
+  await waitFor(async () => expect(await AsyncStorage.getItem('userData:user-1:draft:planned-1')).toBeNull());
+});
+test('restoring an edit draft preserves an explicitly cleared time', async () => {
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [{ ...plannedActivity, scheduleType: 'DAILY', dueTimeMinutes: 600 }], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await AsyncStorage.setItem('userData:user-1:draft:planned-1', JSON.stringify({ title: 'No time', description: '', scheduleType: 'DAILY', dueTime: null }));
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  expect(screen.getByText('Pick time')).toBeTruthy();
+  expect(screen.queryByText('Clear time')).toBeNull();
+});
+test('switching accounts closes private edit drafts and clears search', async () => {
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Private unsaved text');
+  jest.mocked(plannedActivityService.getAll).mockReturnValue(new Promise(() => {}));
+  await act(() => {
+    apiContext.setToken('new-token', 'second');
+    useAuthStore.setState({ user: { id: 'second', username: 'Second', email: 'second@example.test', xp: 0, level: 1 } });
+  });
+  expect(screen.queryByDisplayValue('Private unsaved text')).toBeNull();
+  expect(screen.queryByText('Read TypeScript')).toBeNull();
+});
+test('Today Completed exposes server Undo by completion ID and reloads after success', async () => {
+  jest.mocked(activityService.getAll).mockResolvedValue({ activities: [{ ...completionResult.activity, completedAt: new Date().toISOString() }], pagination: { page: 1, totalPages: 1, total: 1 } });
+  jest.mocked(activityService.undo).mockResolvedValue({ activityId: 'activity-1', undone: true, totalXp: 0, newLevel: 1 });
+  await render(<HomeScreen />);
+  await fireEvent.press(screen.getByText('Completed today +'));
+  expect(screen.getByText('Read TypeScript')).toBeTruthy();
+  jest.mocked(activityService.getAll).mockResolvedValue({ activities: [], pagination: { page: 1, totalPages: 0, total: 0 } });
+  await fireEvent.press(screen.getByText('Undo completion'));
+  await waitFor(() => expect(activityService.undo).toHaveBeenCalledWith('activity-1'));
+  await waitFor(() => expect(screen.queryByText('Read TypeScript')).toBeNull());
+});
+test('discard is explicit and removes the draft without creating a task', async () => {
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByText('Create activity'));
+  await fireEvent.changeText(screen.getByLabelText('Title'), 'Discard me');
+  await fireEvent.press(screen.getByText('Discard draft'));
+  await waitFor(() => expect(screen.queryByDisplayValue('Discard me')).toBeNull());
+  await waitFor(async () => expect(await AsyncStorage.getItem('activityDraft:user-1')).toBeNull());
+  expect(plannedActivityService.create).not.toHaveBeenCalled();
+});
+
+test('recurring edit exposes pause and preserves the server schedule version', async () => {
+  const recurring = { ...plannedActivity, scheduleType: 'DAILY' as const };
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [recurring], todayProgress: { completed: 0, total: 1, percentage: 0 } });
+  jest.mocked(plannedActivityService.update).mockResolvedValue({ plannedActivity: { ...recurring, status: 'DISABLED' } });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByLabelText('Edit: Read TypeScript'));
+  await fireEvent.press(screen.getByRole('switch', { name: 'Paused' }));
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.update).toHaveBeenCalledWith(recurring.id, expect.objectContaining({ status: 'DISABLED', scheduleType: 'DAILY', updatedAt: recurring.updatedAt })));
+});
+test('a notification waits for the fresh task list when the cached snapshot predates the task', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  await AsyncStorage.setItem('userData:user-1:cache:tasks%3Aen', JSON.stringify({ version: 1, savedAt: Date.now(), data: { plannedActivities: [], todayProgress: { completed: 0, total: 0, percentage: 0 } } }));
+  jest.mocked(useLocalSearchParams).mockReturnValue({ taskId: plannedActivity.id });
+  let finish!: (value: any) => void;
+  jest.mocked(plannedActivityService.getAll).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  await render(<ActivitiesScreen />);
+  await waitFor(() => expect(screen.getByText(/Saved data/)).toBeTruthy());
+  expect(alert).not.toHaveBeenCalled();
+  expect(useRouter().setParams).not.toHaveBeenCalled();
+  await act(async () => finish({ plannedActivities: [plannedActivity], todayProgress: { completed: 0, total: 0, percentage: 0 } }));
+  await waitFor(() => expect(screen.getByDisplayValue('Read TypeScript')).toBeTruthy());
+  alert.mockRestore();
+});
+test.each(['light', 'dark'] as const)('Today and its form render long Ukrainian titles in %s theme', async themeMode => {
+  useSettingsStore.setState({ language: 'uk', themeMode });
+  const title = 'Прочитати розділ підручника й підготувати докладний конспект для наступного заняття';
+  jest.mocked(plannedActivityService.getAll).mockResolvedValue({ plannedActivities: [{ ...plannedActivity, title, displayTitle: title }], todayProgress: { completed: 0, total: 0, percentage: 0 } });
+  await render(<HomeScreen />);
+  const text = screen.getByText(title);
+  expect(text.props.numberOfLines).toBeUndefined();
+  expect(text.props.allowFontScaling).not.toBe(false);
+  await fireEvent.press(screen.getByRole('button', { name: 'Швидко додати' }));
+  expect(screen.getByText('Додаткові параметри')).toBeTruthy();
+  expect(screen.getByText('Зберегти')).toBeTruthy();
+});
+
+test('draft calendar date and minutes survive restore without an ISO timezone conversion', async () => {
+  await AsyncStorage.setItem('activityDraft:user-1', JSON.stringify({ title: 'Tomorrow', description: '', scheduleType: 'DATE', dueDate: '2026-11-03', dueTimeMinutes: 615 }));
+  jest.mocked(plannedActivityService.create).mockResolvedValue({ plannedActivity });
+  await render(<ActivitiesScreen />);
+  await fireEvent.press(screen.getByText('Create activity'));
+  await fireEvent.press(screen.getByText('Save'));
+  await waitFor(() => expect(plannedActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Tomorrow', dueDate: '2026-11-03', dueTimeMinutes: 615 })));
+});
+
+test('completing a cached habit updates its occurrence even when the follow-up refresh is offline', async () => {
+  const current = new Date();
+  const day = current.toISOString().slice(0, 10);
+  const previousDay = new Date(current.getTime() - 86400000).toISOString().slice(0, 10);
+  const habit = { ...plannedActivity, scheduleType: 'DAILY' as const, isCompletedToday: true, occurrenceDate: previousDay, completedTodayAt: `${previousDay}T10:00:00Z` };
+  jest.mocked(plannedActivityService.getAll).mockResolvedValueOnce({ plannedActivities: [habit], todayProgress: { completed: 0, total: 1, percentage: 0 } }).mockRejectedValue(new Error('Offline'));
+  jest.mocked(plannedActivityService.complete).mockResolvedValue({ ...completionResult, activity: { ...completionResult.activity, completedAt: current.toISOString(), completedForDate: day } });
+  await render(<HomeScreen />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Complete: Read TypeScript' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Complete: Read TypeScript' })).toBeNull());
+  await waitFor(async () => {
+    const raw = await AsyncStorage.getItem('userData:user-1:cache:tasks%3Aen');
+    expect(JSON.parse(raw!).data.plannedActivities[0].occurrenceDate).toBe(day);
+  });
 });
